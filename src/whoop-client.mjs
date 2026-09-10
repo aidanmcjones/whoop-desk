@@ -12,6 +12,19 @@
 //   - getDashboard({ days = 30 } = {}) -> normalized dashboard payload
 //   - getCached() -> parsed last-dashboard.json, or null if absent
 //
+//   Building blocks reused by src/history.mjs for full-history backfill
+//   (see that file for the higher-level store API):
+//   - getValidTokens() / getAuthedContext() -> { tokens, _refreshing }
+//   - apiFetch(url, ctx) -> Response (handles 401 refresh + 429 retry)
+//   - fetchRecordsPage(kind, { start, end, limit, nextToken, useV1 }, ctx)
+//       -> { notFound, records, nextToken } (kind: recovery|sleep|cycle|workout)
+//   - fetchAllRecords(kind, { start, end, limit }, ctx, notes) -> records[]
+//   - fetchProfile(ctx, notes) -> { firstName, lastName }
+//   - fetchBodyMeasurement(ctx, notes) -> { heightM, weightKg, maxHr }
+//   - normalizeRecovery/normalizeSleep/normalizeCycle/normalizeWorkout(r)
+//   - buildSleepArray(rawSleepRecords) -> sleep[] (handles nap folding)
+//   - dateDesc(a, b), localDate(isoOrDate), milliToMin(ms), delay(ms)
+//
 // CLI test mode: `node src/whoop-client.mjs --test`
 
 import fs from 'node:fs';
@@ -167,14 +180,14 @@ const chicagoDateFormatter = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 });
 
-function localDate(isoOrDate) {
+export function localDate(isoOrDate) {
   if (isoOrDate == null) return null;
   const d = isoOrDate instanceof Date ? isoOrDate : new Date(isoOrDate);
   if (Number.isNaN(d.getTime())) return null;
   return chicagoDateFormatter.format(d); // YYYY-MM-DD
 }
 
-function milliToMin(ms) {
+export function milliToMin(ms) {
   if (ms == null || !Number.isFinite(ms)) return null;
   return Math.round(ms / 60000);
 }
@@ -182,6 +195,10 @@ function milliToMin(ms) {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+// Exported alias: `sleep` (the delay helper) vs. the "sleep" data
+// collection is a confusing pairing, so history.mjs imports this as `delay`.
+export { sleep as delay };
 
 // -----------------------------------------------------------------------
 // Token storage
@@ -251,12 +268,21 @@ async function refreshTokens(oldTokens) {
   return newTokens;
 }
 
-async function getValidTokens() {
+export async function getValidTokens() {
   let tokens = await readTokens();
   if (isExpired(tokens)) {
     tokens = await refreshTokens(tokens);
   }
   return tokens;
+}
+
+// Convenience wrapper: the { tokens, _refreshing } bag threaded through
+// apiFetch/fetchRecordsPage/fetchAllRecords calls. Callers outside this
+// module (e.g. history.mjs) should get one of these per logical operation
+// rather than building the shape by hand.
+export async function getAuthedContext() {
+  const tokens = await getValidTokens();
+  return { tokens, _refreshing: null };
 }
 
 function authHeader(tokens) {
@@ -287,7 +313,7 @@ async function refreshShared(ctx) {
   return ctx._refreshing;
 }
 
-async function apiFetch(url, ctx, { retried401 = false, retried429 = false } = {}) {
+export async function apiFetch(url, ctx, { retried401 = false, retried429 = false } = {}) {
   const res = await fetch(url, { headers: authHeader(ctx.tokens) });
 
   if (res.status === 401 && !retried401) {
@@ -307,46 +333,66 @@ async function apiFetch(url, ctx, { retried401 = false, retried429 = false } = {
 
 // -----------------------------------------------------------------------
 // Paginated collection fetch, with v1 fallback on 404.
+//
+// fetchRecordsPage is the single-page primitive (exported so history.mjs
+// can drive its own resumable, throttled, progress-reporting pagination
+// loop); fetchAllRecords is the original all-at-once helper built on top
+// of it, kept for getDashboard()'s bounded 30-day window.
 // -----------------------------------------------------------------------
-async function fetchAllRecords(kind, { start, end, limit = 25 }, ctx, notes) {
-  let base = V2_PATHS[kind];
-  let usedV1 = false;
+export async function fetchRecordsPage(
+  kind,
+  { start, end, limit = 25, nextToken, useV1 = false } = {},
+  ctx
+) {
+  const base = useV1 ? V1_PATHS[kind] : V2_PATHS[kind];
+  const url = new URL(API_BASE + base);
+  url.searchParams.set('start', start);
+  url.searchParams.set('end', end);
+  url.searchParams.set('limit', String(limit));
+  if (nextToken) url.searchParams.set('nextToken', nextToken);
+
+  const res = await apiFetch(url, ctx);
+
+  if (res.status === 404 && !useV1) {
+    return { notFound: true, records: [], nextToken: null };
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`${kind} fetch failed: HTTP ${res.status} ${text.slice(0, 200)}`);
+  }
+  const body = await res.json();
+  return {
+    notFound: false,
+    records: body.records || [],
+    nextToken: body.next_token || null,
+  };
+}
+
+export async function fetchAllRecords(kind, { start, end, limit = 25 }, ctx, notes) {
+  let useV1 = false;
   let nextToken;
   const records = [];
 
   for (;;) {
-    const url = new URL(API_BASE + base);
-    url.searchParams.set('start', start);
-    url.searchParams.set('end', end);
-    url.searchParams.set('limit', String(limit));
-    if (nextToken) url.searchParams.set('nextToken', nextToken);
+    const page = await fetchRecordsPage(kind, { start, end, limit, nextToken, useV1 }, ctx);
 
-    const res = await apiFetch(url, ctx);
-
-    if (res.status === 404 && !usedV1) {
-      usedV1 = true;
-      base = V1_PATHS[kind];
+    if (page.notFound && !useV1) {
+      useV1 = true;
       nextToken = undefined;
       records.length = 0;
       continue;
     }
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      throw new Error(`${kind} fetch failed: HTTP ${res.status} ${text.slice(0, 200)}`);
-    }
-
-    const body = await res.json();
-    records.push(...(body.records || []));
-    nextToken = body.next_token || null;
+    records.push(...page.records);
+    nextToken = page.nextToken;
     if (!nextToken) break;
   }
 
-  if (usedV1) notes.v1Fallbacks.push(kind);
+  if (useV1) notes.v1Fallbacks.push(kind);
   return records;
 }
 
-async function fetchProfile(ctx, notes) {
+export async function fetchProfile(ctx, notes) {
   let res = await apiFetch(new URL(API_BASE + '/v2/user/profile/basic'), ctx);
   if (res.status === 404) {
     notes.v1Fallbacks.push('profile');
@@ -363,10 +409,32 @@ async function fetchProfile(ctx, notes) {
   };
 }
 
+// Body measurement (height/weight/max HR) lives on a separate v2 endpoint.
+// Cache-tolerant: any failure here should not take down the rest of the
+// dashboard, so callers get nulls back rather than a thrown error.
+export async function fetchBodyMeasurement(ctx, notes) {
+  try {
+    const res = await apiFetch(new URL(API_BASE + '/v2/user/measurement/body'), ctx);
+    if (!res.ok) {
+      notes.bodyMeasurementError = `HTTP ${res.status}`;
+      return { heightM: null, weightKg: null, maxHr: null };
+    }
+    const data = await res.json();
+    return {
+      heightM: data.height_meter ?? null,
+      weightKg: data.weight_kilogram ?? null,
+      maxHr: data.max_heart_rate ?? null,
+    };
+  } catch (err) {
+    notes.bodyMeasurementError = err && err.message ? err.message : String(err);
+    return { heightM: null, weightKg: null, maxHr: null };
+  }
+}
+
 // -----------------------------------------------------------------------
 // Normalizers
 // -----------------------------------------------------------------------
-function normalizeRecovery(r) {
+export function normalizeRecovery(r) {
   const scored = r.score_state === 'SCORED';
   const score = r.score || {};
   // Recovery records carry no start/end of their own (they're keyed off
@@ -383,7 +451,7 @@ function normalizeRecovery(r) {
   };
 }
 
-function normalizeSleep(r) {
+export function normalizeSleep(r) {
   const scored = r.score_state === 'SCORED';
   const score = r.score || {};
   const stage = score.stage_summary || {};
@@ -401,6 +469,13 @@ function normalizeSleep(r) {
       (need.need_from_recent_nap_milli || 0)
     : null;
 
+  // Respiratory rate arrives as a float breaths/min value (e.g. 15.7);
+  // round to 1 decimal for display, keep null when unscored/absent.
+  const respiratoryRateBpm =
+    scored && typeof score.respiratory_rate === 'number'
+      ? Math.round(score.respiratory_rate * 10) / 10
+      : null;
+
   return {
     date: localDate(r.end || r.start || r.created_at),
     performancePct: scored ? score.sleep_performance_percentage ?? null : null,
@@ -408,6 +483,8 @@ function normalizeSleep(r) {
     needMin: milliToMin(needMs),
     efficiencyPct: scored ? score.sleep_efficiency_percentage ?? null : null,
     consistencyPct: scored ? score.sleep_consistency_percentage ?? null : null,
+    respiratoryRateBpm,
+    debtMin: milliToMin(need.need_from_sleep_debt_milli),
     stages: {
       deepMin: milliToMin(stage.total_slow_wave_sleep_time_milli),
       remMin: milliToMin(stage.total_rem_sleep_time_milli),
@@ -420,7 +497,7 @@ function normalizeSleep(r) {
   };
 }
 
-function normalizeCycle(r) {
+export function normalizeCycle(r) {
   const scored = r.score_state === 'SCORED';
   const score = r.score || {};
   return {
@@ -432,11 +509,28 @@ function normalizeCycle(r) {
   };
 }
 
-function normalizeWorkout(r) {
+export function normalizeWorkout(r) {
   const scored = r.score_state === 'SCORED';
   const score = r.score || {};
   const durationMin =
     r.start && r.end ? Math.round((new Date(r.end) - new Date(r.start)) / 60000) : null;
+
+  // v2 workout score field is `zone_durations` (plural), with milli-duration
+  // members zone_zero_milli..zone_five_milli. We only surface z1-z5 (zone
+  // zero is "no zone"/rest time and isn't part of the requested shape).
+  // Tolerate a hypothetical singular `zone_duration` too, and be robust to
+  // the field disappearing entirely on an unscored record.
+  const zoneDurations = score.zone_durations || score.zone_duration || {};
+  const zones = scored
+    ? {
+        z1Min: milliToMin(zoneDurations.zone_one_milli),
+        z2Min: milliToMin(zoneDurations.zone_two_milli),
+        z3Min: milliToMin(zoneDurations.zone_three_milli),
+        z4Min: milliToMin(zoneDurations.zone_four_milli),
+        z5Min: milliToMin(zoneDurations.zone_five_milli),
+      }
+    : { z1Min: null, z2Min: null, z3Min: null, z4Min: null, z5Min: null };
+
   return {
     date: localDate(r.end || r.start || r.created_at),
     sport: normalizeSportName(r),
@@ -446,17 +540,18 @@ function normalizeWorkout(r) {
     avgHr: scored ? score.average_heart_rate ?? null : null,
     maxHr: scored ? score.max_heart_rate ?? null : null,
     kilojoules: scored && score.kilojoule != null ? Math.round(score.kilojoule) : null,
+    zones,
   };
 }
 
-function dateDesc(a, b) {
+export function dateDesc(a, b) {
   if (a.date == null && b.date == null) return 0;
   if (a.date == null) return 1;
   if (b.date == null) return -1;
   return a.date < b.date ? 1 : a.date > b.date ? -1 : 0;
 }
 
-function buildSleepArray(rawSleepRecords) {
+export function buildSleepArray(rawSleepRecords) {
   const napCountByDate = {};
   for (const r of rawSleepRecords) {
     if (r.nap) {
@@ -483,13 +578,17 @@ export async function getDashboard({ days = 30 } = {}) {
   const start = new Date(end.getTime() - days * 86400000);
   const range = { start: start.toISOString(), end: end.toISOString() };
 
-  const [recoveryRaw, sleepRaw, cycleRaw, workoutRaw, profile] = await Promise.all([
-    fetchAllRecords('recovery', range, ctx, notes),
-    fetchAllRecords('sleep', range, ctx, notes),
-    fetchAllRecords('cycle', range, ctx, notes),
-    fetchAllRecords('workout', range, ctx, notes),
-    fetchProfile(ctx, notes),
-  ]);
+  const [recoveryRaw, sleepRaw, cycleRaw, workoutRaw, profileBasic, bodyMeasurement] =
+    await Promise.all([
+      fetchAllRecords('recovery', range, ctx, notes),
+      fetchAllRecords('sleep', range, ctx, notes),
+      fetchAllRecords('cycle', range, ctx, notes),
+      fetchAllRecords('workout', range, ctx, notes),
+      fetchProfile(ctx, notes),
+      fetchBodyMeasurement(ctx, notes),
+    ]);
+
+  const profile = { ...profileBasic, ...bodyMeasurement };
 
   const dashboard = {
     generatedAt: new Date().toISOString(),
@@ -502,6 +601,11 @@ export async function getDashboard({ days = 30 } = {}) {
 
   if (notes.v1Fallbacks.length) {
     process.stderr.write(`[whoop-client] used v1 fallback for: ${notes.v1Fallbacks.join(', ')}\n`);
+  }
+  if (notes.bodyMeasurementError) {
+    process.stderr.write(
+      `[whoop-client] body measurement fetch failed (non-fatal): ${notes.bodyMeasurementError}\n`
+    );
   }
 
   await fsp.writeFile(CACHE_FILE, JSON.stringify(dashboard, null, 2), 'utf8');
@@ -527,6 +631,11 @@ async function runTestMode() {
   const todayStr = localDate(new Date());
   const todayRecovery = dashboard.recovery.find((r) => r.date === todayStr);
 
+  const newestSleep = dashboard.sleep[0] || null;
+  const workoutWithZones = dashboard.workouts.find(
+    (w) => w.zones && Object.values(w.zones).some((v) => v != null)
+  );
+
   const summary = {
     counts: {
       recovery: dashboard.recovery.length,
@@ -537,6 +646,15 @@ async function runTestMode() {
     todayRecoveryScore: todayRecovery ? todayRecovery.score : null,
     newestSleepPerformancePct: dashboard.sleep[0]?.performancePct ?? null,
     profileFirstName: dashboard.profile.firstName,
+    newFields: {
+      sleepHasRespiratoryRate: newestSleep ? newestSleep.respiratoryRateBpm != null : null,
+      sleepHasDebtMin: newestSleep ? newestSleep.debtMin != null : null,
+      workoutZonesSampleFound: !!workoutWithZones,
+      workoutZoneKeys: workoutWithZones ? Object.keys(workoutWithZones.zones) : null,
+      profileHasHeightM: dashboard.profile.heightM != null,
+      profileHasWeightKg: dashboard.profile.weightKg != null,
+      profileHasMaxHr: dashboard.profile.maxHr != null,
+    },
   };
 
   console.log(JSON.stringify(summary, null, 2));

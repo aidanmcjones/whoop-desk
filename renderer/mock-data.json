@@ -2,7 +2,10 @@
   "generatedAt": "2026-09-10T12:32:00.000Z",
   "profile": {
     "firstName": "Demo",
-    "lastName": "User"
+    "lastName": "User",
+    "heightM": 1.78,
+    "weightKg": 76.5,
+    "maxHr": 191
   },
   "recovery": [
     {
@@ -292,7 +295,9 @@
       },
       "start": "2026-09-10T04:39:00.000Z",
       "end": "2026-09-10T12:57:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 15.2,
+      "debtMin": 0
     },
     {
       "date": "2026-09-09",
@@ -309,7 +314,9 @@
       },
       "start": "2026-09-09T07:40:00.000Z",
       "end": "2026-09-09T13:13:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 15.6,
+      "debtMin": 112
     },
     {
       "date": "2026-09-08",
@@ -326,7 +333,9 @@
       },
       "start": "2026-09-08T03:37:00.000Z",
       "end": "2026-09-08T11:45:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 16,
+      "debtMin": 0
     },
     {
       "date": "2026-09-07",
@@ -343,7 +352,9 @@
       },
       "start": "2026-09-07T06:29:00.000Z",
       "end": "2026-09-07T13:34:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 15.3,
+      "debtMin": 18
     },
     {
       "date": "2026-09-06",
@@ -360,7 +371,9 @@
       },
       "start": "2026-09-06T08:11:00.000Z",
       "end": "2026-09-06T14:19:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 14.7,
+      "debtMin": 65
     },
     {
       "date": "2026-09-05",
@@ -377,7 +390,9 @@
       },
       "start": null,
       "end": null,
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": null,
+      "debtMin": null
     },
     {
       "date": "2026-09-04",
@@ -394,7 +409,9 @@
       },
       "start": "2026-09-04T06:32:00.000Z",
       "end": "2026-09-04T13:06:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 15.7,
+      "debtMin": 83
     },
     {
       "date": "2026-09-03",
@@ -411,7 +428,9 @@
       },
       "start": "2026-09-03T05:16:00.000Z",
       "end": "2026-09-03T12:49:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 15.4,
+      "debtMin": 18
     },
     {
       "date": "2026-09-02",
@@ -428,7 +447,9 @@
       },
       "start": "2026-09-02T04:53:00.000Z",
       "end": "2026-09-02T12:33:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 15.3,
+      "debtMin": 0
     },
     {
       "date": "2026-09-01",
@@ -445,7 +466,9 @@
       },
       "start": "2026-09-01T07:12:00.000Z",
       "end": "2026-09-01T13:07:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 16.5,
+      "debtMin": 110
     },
     {
       "date": "2026-08-31",
@@ -462,7 +485,9 @@
       },
       "start": "2026-08-31T04:22:00.000Z",
       "end": "2026-08-31T12:05:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 16.2,
+      "debtMin": 0
     },
     {
       "date": "2026-08-30",
@@ -479,7 +504,9 @@
       },
       "start": "2026-08-30T05:37:00.000Z",
       "end": "2026-08-30T11:36:00.000Z",
-      "naps": 1
+      "naps": 1,
+      "respiratoryRateBpm": 16.2,
+      "debtMin": 62
     },
     {
       "date": "2026-08-29",
@@ -496,7 +523,9 @@
       },
       "start": "2026-08-29T08:49:00.000Z",
       "end": "2026-08-29T14:41:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 16.7,
+      "debtMin": 65
     },
     {
       "date": "2026-08-28",
@@ -513,7 +542,9 @@
       },
       "start": "2026-08-28T07:59:00.000Z",
       "end": "2026-08-28T14:04:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 16.5,
+      "debtMin": 93
     },
     {
       "date": "2026-08-27",
@@ -530,7 +561,9 @@
       },
       "start": "2026-08-27T05:53:00.000Z",
       "end": "2026-08-27T11:54:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 16.7,
+      "debtMin": 109
     },
     {
       "date": "2026-08-26",
@@ -547,7 +580,9 @@
       },
       "start": "2026-08-26T05:49:00.000Z",
       "end": "2026-08-26T11:49:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 14.6,
+      "debtMin": 111
     },
     {
       "date": "2026-08-25",
@@ -564,7 +599,9 @@
       },
       "start": "2026-08-25T05:14:00.000Z",
       "end": "2026-08-25T13:16:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 14.6,
+      "debtMin": 0
     },
     {
       "date": "2026-08-24",
@@ -581,7 +618,9 @@
       },
       "start": "2026-08-24T08:23:00.000Z",
       "end": "2026-08-24T13:54:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 15.9,
+      "debtMin": 91
     },
     {
       "date": "2026-08-23",
@@ -598,7 +637,9 @@
       },
       "start": "2026-08-23T06:18:00.000Z",
       "end": "2026-08-23T13:43:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 15.3,
+      "debtMin": 3
     },
     {
       "date": "2026-08-22",
@@ -615,7 +656,9 @@
       },
       "start": "2026-08-22T04:44:00.000Z",
       "end": "2026-08-22T12:51:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 16.6,
+      "debtMin": 0
     },
     {
       "date": "2026-08-21",
@@ -632,7 +675,9 @@
       },
       "start": "2026-08-21T03:41:00.000Z",
       "end": "2026-08-21T10:27:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 15.5,
+      "debtMin": 58
     },
     {
       "date": "2026-08-20",
@@ -649,7 +694,9 @@
       },
       "start": "2026-08-20T07:25:00.000Z",
       "end": "2026-08-20T14:11:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 16.1,
+      "debtMin": 51
     },
     {
       "date": "2026-08-19",
@@ -666,7 +713,9 @@
       },
       "start": "2026-08-19T06:26:00.000Z",
       "end": "2026-08-19T12:21:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 15,
+      "debtMin": 62
     },
     {
       "date": "2026-08-18",
@@ -683,7 +732,9 @@
       },
       "start": "2026-08-18T07:14:00.000Z",
       "end": "2026-08-18T12:50:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 14.8,
+      "debtMin": 128
     },
     {
       "date": "2026-08-17",
@@ -700,7 +751,9 @@
       },
       "start": "2026-08-17T04:19:00.000Z",
       "end": "2026-08-17T10:09:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 15.9,
+      "debtMin": 96
     },
     {
       "date": "2026-08-16",
@@ -717,7 +770,9 @@
       },
       "start": "2026-08-16T05:30:00.000Z",
       "end": "2026-08-16T11:06:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 14.8,
+      "debtMin": 128
     },
     {
       "date": "2026-08-15",
@@ -734,7 +789,9 @@
       },
       "start": "2026-08-15T06:55:00.000Z",
       "end": "2026-08-15T14:50:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 14.8,
+      "debtMin": 0
     },
     {
       "date": "2026-08-14",
@@ -751,7 +808,9 @@
       },
       "start": "2026-08-14T05:29:00.000Z",
       "end": "2026-08-14T12:21:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 14.6,
+      "debtMin": 59
     },
     {
       "date": "2026-08-13",
@@ -768,7 +827,9 @@
       },
       "start": "2026-08-13T04:46:00.000Z",
       "end": "2026-08-13T10:35:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 16.6,
+      "debtMin": 70
     },
     {
       "date": "2026-08-12",
@@ -785,7 +846,9 @@
       },
       "start": "2026-08-12T03:23:00.000Z",
       "end": "2026-08-12T10:30:00.000Z",
-      "naps": 0
+      "naps": 0,
+      "respiratoryRateBpm": 14.7,
+      "debtMin": 1
     }
   ],
   "cycles": [
@@ -1010,7 +1073,14 @@
       "strain": 9.4,
       "avgHr": 131,
       "maxHr": 145,
-      "kilojoules": 405
+      "kilojoules": 405,
+      "zones": {
+        "z1Min": 3,
+        "z2Min": 8,
+        "z3Min": 11,
+        "z4Min": 7,
+        "z5Min": 4
+      }
     },
     {
       "date": "2026-09-07",
@@ -1021,7 +1091,14 @@
       "strain": 4.1,
       "avgHr": 79,
       "maxHr": 107,
-      "kilojoules": 929
+      "kilojoules": 929,
+      "zones": {
+        "z1Min": 34,
+        "z2Min": 11,
+        "z3Min": 3,
+        "z4Min": 0,
+        "z5Min": 0
+      }
     },
     {
       "date": "2026-09-05",
@@ -1032,7 +1109,14 @@
       "strain": 15.6,
       "avgHr": 104,
       "maxHr": 131,
-      "kilojoules": 781
+      "kilojoules": 781,
+      "zones": {
+        "z1Min": 14,
+        "z2Min": 15,
+        "z3Min": 9,
+        "z4Min": 3,
+        "z5Min": 1
+      }
     },
     {
       "date": "2026-09-04",
@@ -1043,7 +1127,14 @@
       "strain": 5.4,
       "avgHr": 145,
       "maxHr": 168,
-      "kilojoules": 1172
+      "kilojoules": 1172,
+      "zones": {
+        "z1Min": 2,
+        "z2Min": 11,
+        "z3Min": 23,
+        "z4Min": 20,
+        "z5Min": 12
+      }
     },
     {
       "date": "2026-09-03",
@@ -1054,7 +1145,14 @@
       "strain": 7.4,
       "avgHr": 114,
       "maxHr": 130,
-      "kilojoules": 289
+      "kilojoules": 289,
+      "zones": {
+        "z1Min": 10,
+        "z2Min": 9,
+        "z3Min": 6,
+        "z4Min": 3,
+        "z5Min": 1
+      }
     },
     {
       "date": "2026-09-02",
@@ -1065,7 +1163,14 @@
       "strain": 12.4,
       "avgHr": 140,
       "maxHr": 167,
-      "kilojoules": 931
+      "kilojoules": 931,
+      "zones": {
+        "z1Min": 5,
+        "z2Min": 10,
+        "z3Min": 20,
+        "z4Min": 15,
+        "z5Min": 7
+      }
     },
     {
       "date": "2026-08-31",
@@ -1076,7 +1181,14 @@
       "strain": 4.2,
       "avgHr": 117,
       "maxHr": 135,
-      "kilojoules": 705
+      "kilojoules": 705,
+      "zones": {
+        "z1Min": 22,
+        "z2Min": 19,
+        "z3Min": 11,
+        "z4Min": 4,
+        "z5Min": 0
+      }
     },
     {
       "date": "2026-08-30",
@@ -1087,7 +1199,14 @@
       "strain": 16.2,
       "avgHr": 147,
       "maxHr": 173,
-      "kilojoules": 1035
+      "kilojoules": 1035,
+      "zones": {
+        "z1Min": 1,
+        "z2Min": 4,
+        "z3Min": 11,
+        "z4Min": 16,
+        "z5Min": 19
+      }
     },
     {
       "date": "2026-08-30",
@@ -1098,7 +1217,14 @@
       "strain": 17.8,
       "avgHr": 109,
       "maxHr": 125,
-      "kilojoules": 311
+      "kilojoules": 311,
+      "zones": {
+        "z1Min": null,
+        "z2Min": null,
+        "z3Min": null,
+        "z4Min": null,
+        "z5Min": null
+      }
     },
     {
       "date": "2026-08-28",
@@ -1109,7 +1235,14 @@
       "strain": 7.8,
       "avgHr": 166,
       "maxHr": 187,
-      "kilojoules": 1126
+      "kilojoules": 1126,
+      "zones": {
+        "z1Min": 2,
+        "z2Min": 7,
+        "z3Min": 12,
+        "z4Min": 21,
+        "z5Min": 23
+      }
     },
     {
       "date": "2026-08-27",
@@ -1120,7 +1253,14 @@
       "strain": 7.2,
       "avgHr": 142,
       "maxHr": 154,
-      "kilojoules": 1311
+      "kilojoules": 1311,
+      "zones": {
+        "z1Min": 4,
+        "z2Min": 9,
+        "z3Min": 21,
+        "z4Min": 19,
+        "z5Min": 12
+      }
     },
     {
       "date": "2026-08-27",
@@ -1131,7 +1271,14 @@
       "strain": 15.7,
       "avgHr": 153,
       "maxHr": 168,
-      "kilojoules": 930
+      "kilojoules": 930,
+      "zones": {
+        "z1Min": 4,
+        "z2Min": 10,
+        "z3Min": 18,
+        "z4Min": 12,
+        "z5Min": 5
+      }
     },
     {
       "date": "2026-08-26",
@@ -1142,7 +1289,14 @@
       "strain": 12.2,
       "avgHr": 150,
       "maxHr": 167,
-      "kilojoules": 1605
+      "kilojoules": 1605,
+      "zones": {
+        "z1Min": 7,
+        "z2Min": 23,
+        "z3Min": 32,
+        "z4Min": 20,
+        "z5Min": 11
+      }
     },
     {
       "date": "2026-08-26",
@@ -1153,7 +1307,14 @@
       "strain": 12.7,
       "avgHr": 108,
       "maxHr": 132,
-      "kilojoules": 423
+      "kilojoules": 423,
+      "zones": {
+        "z1Min": 13,
+        "z2Min": 8,
+        "z3Min": 2,
+        "z4Min": 0,
+        "z5Min": 0
+      }
     },
     {
       "date": "2026-08-25",
@@ -1164,7 +1325,14 @@
       "strain": 6.4,
       "avgHr": 145,
       "maxHr": 170,
-      "kilojoules": 1164
+      "kilojoules": 1164,
+      "zones": {
+        "z1Min": 3,
+        "z2Min": 5,
+        "z3Min": 11,
+        "z4Min": 18,
+        "z5Min": 21
+      }
     },
     {
       "date": "2026-08-24",
@@ -1175,7 +1343,14 @@
       "strain": 16.5,
       "avgHr": 130,
       "maxHr": 154,
-      "kilojoules": 883
+      "kilojoules": 883,
+      "zones": {
+        "z1Min": 5,
+        "z2Min": 11,
+        "z3Min": 17,
+        "z4Min": 9,
+        "z5Min": 5
+      }
     },
     {
       "date": "2026-08-22",
@@ -1186,7 +1361,14 @@
       "strain": 4.7,
       "avgHr": 130,
       "maxHr": 152,
-      "kilojoules": 829
+      "kilojoules": 829,
+      "zones": {
+        "z1Min": 8,
+        "z2Min": 18,
+        "z3Min": 25,
+        "z4Min": 14,
+        "z5Min": 7
+      }
     },
     {
       "date": "2026-08-21",
@@ -1197,7 +1379,14 @@
       "strain": 15.3,
       "avgHr": 75,
       "maxHr": 87,
-      "kilojoules": 709
+      "kilojoules": 709,
+      "zones": {
+        "z1Min": 43,
+        "z2Min": 15,
+        "z3Min": 2,
+        "z4Min": 2,
+        "z5Min": 0
+      }
     },
     {
       "date": "2026-08-20",
@@ -1208,7 +1397,14 @@
       "strain": 14.5,
       "avgHr": 97,
       "maxHr": 113,
-      "kilojoules": 573
+      "kilojoules": 573,
+      "zones": {
+        "z1Min": 22,
+        "z2Min": 13,
+        "z3Min": 5,
+        "z4Min": 1,
+        "z5Min": 0
+      }
     },
     {
       "date": "2026-08-16",
@@ -1219,7 +1415,14 @@
       "strain": 13.6,
       "avgHr": 171,
       "maxHr": 188,
-      "kilojoules": 897
+      "kilojoules": 897,
+      "zones": {
+        "z1Min": 3,
+        "z2Min": 12,
+        "z3Min": 24,
+        "z4Min": 22,
+        "z5Min": 14
+      }
     },
     {
       "date": "2026-08-15",
@@ -1230,7 +1433,14 @@
       "strain": 8,
       "avgHr": 115,
       "maxHr": 130,
-      "kilojoules": 1250
+      "kilojoules": 1250,
+      "zones": {
+        "z1Min": 25,
+        "z2Min": 26,
+        "z3Min": 15,
+        "z4Min": 4,
+        "z5Min": 2
+      }
     },
     {
       "date": "2026-08-14",
@@ -1241,7 +1451,14 @@
       "strain": 14.5,
       "avgHr": 161,
       "maxHr": 184,
-      "kilojoules": 1031
+      "kilojoules": 1031,
+      "zones": {
+        "z1Min": 3,
+        "z2Min": 8,
+        "z3Min": 17,
+        "z4Min": 15,
+        "z5Min": 10
+      }
     },
     {
       "date": "2026-08-13",
@@ -1252,7 +1469,14 @@
       "strain": 10.9,
       "avgHr": 161,
       "maxHr": 181,
-      "kilojoules": 1471
+      "kilojoules": 1471,
+      "zones": {
+        "z1Min": 6,
+        "z2Min": 16,
+        "z3Min": 26,
+        "z4Min": 19,
+        "z5Min": 6
+      }
     },
     {
       "date": "2026-08-12",
@@ -1263,7 +1487,113 @@
       "strain": 10.8,
       "avgHr": 153,
       "maxHr": 173,
-      "kilojoules": 763
+      "kilojoules": 763,
+      "zones": {
+        "z1Min": 5,
+        "z2Min": 8,
+        "z3Min": 11,
+        "z4Min": 20,
+        "z5Min": 20
+      }
     }
-  ]
+  ],
+  "journal": [
+    {
+      "id": "seed-1",
+      "date": "2026-09-09",
+      "tags": [
+        "late-screen",
+        "stress"
+      ],
+      "note": "Rough day at work, scrolled in bed past midnight.",
+      "createdAt": "2026-09-09T23:58:00.000Z"
+    },
+    {
+      "id": "seed-2",
+      "date": "2026-09-08",
+      "tags": [
+        "sauna"
+      ],
+      "note": "Sauna session after swim, felt great.",
+      "createdAt": "2026-09-08T21:10:00.000Z"
+    },
+    {
+      "id": "seed-3",
+      "date": "2026-09-06",
+      "tags": [
+        "alcohol",
+        "late-meal"
+      ],
+      "note": "Dinner out with friends, two glasses of wine.",
+      "createdAt": "2026-09-06T22:40:00.000Z"
+    },
+    {
+      "id": "seed-4",
+      "date": "2026-09-04",
+      "tags": [
+        "travel"
+      ],
+      "note": "Flew back from Denver, short night.",
+      "createdAt": "2026-09-04T20:05:00.000Z"
+    },
+    {
+      "id": "seed-5",
+      "date": "2026-09-01",
+      "tags": [
+        "early-workout",
+        "caffeine-late"
+      ],
+      "note": "6am lift, coffee at 4pm which was probably a mistake.",
+      "createdAt": "2026-09-01T21:30:00.000Z"
+    },
+    {
+      "id": "seed-6",
+      "date": "2026-08-29",
+      "tags": [
+        "reading-before-bed"
+      ],
+      "note": "Read instead of screens, fell asleep fast.",
+      "createdAt": "2026-08-29T22:15:00.000Z"
+    },
+    {
+      "id": "seed-7",
+      "date": "2026-08-26",
+      "tags": [
+        "sick"
+      ],
+      "note": "Scratchy throat, took it easy.",
+      "createdAt": "2026-08-26T19:00:00.000Z"
+    },
+    {
+      "id": "seed-8",
+      "date": "2026-08-21",
+      "tags": [
+        "stress",
+        "caffeine-late"
+      ],
+      "note": "Big deadline, second coffee at 3pm.",
+      "createdAt": "2026-08-21T20:50:00.000Z"
+    }
+  ],
+  "settings": {
+    "launchAtLogin": false,
+    "notificationsEnabled": true,
+    "morningHour": 7,
+    "autoRefreshMins": 15
+  },
+  "backfillStatus": {
+    "backfillComplete": true,
+    "running": false,
+    "counts": {
+      "recovery": 1004,
+      "sleep": 1004,
+      "cycles": 1004,
+      "workouts": 812
+    },
+    "oldestDate": "2023-12-15"
+  },
+  "coachStatus": {
+    "available": false,
+    "source": null
+  }
 }
