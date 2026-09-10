@@ -1,8 +1,20 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Tray,
+  Menu,
+  nativeImage,
+  Notification,
+  powerMonitor,
+} = require('electron');
 const path = require('path');
+const os = require('os');
 const fs = require('fs');
+const fsp = require('fs/promises');
 
 const isSmoke = process.argv.includes('--smoke');
+const isIpcCheck = process.argv.includes('--ipc-check');
 
 // Optional `--size=WIDTHxHEIGHT` override, used to spot-check the responsive
 // layout at a second window size (e.g. `npm run smoke -- --size=1024x700`).
@@ -17,25 +29,56 @@ function windowSize() {
 
 app.setName('Whoop+');
 
+// The packaged Whoop+.app and a dev `electron .` checkout both default to
+// the same userData dir ("Whoop+"), since userData is keyed off app name.
+// Running both at once causes silent single-instance-lock quits and
+// localStorage/settings.json write contention. Give the dev build its own
+// userData dir, set as early as possible (before app is ready, and before
+// the single-instance lock is requested, since the lockfile also lives
+// under userData).
+if (!app.isPackaged) {
+  app.setPath('userData', `${app.getPath('userData')}-dev`);
+}
+
 // Single-instance lock.
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    const win = BrowserWindow.getAllWindows()[0];
-    if (win) {
-      if (win.isMinimized()) win.restore();
-      win.focus();
-    }
+    showAndFocusWindow();
   });
 
   let mainWindow = null;
+  let tray = null;
+  let journalStore = null;
+  let lastDashboardForTray = null;
+  let refreshInFlight = null;
+  let autoRefreshTimer = null;
+  let morningTimer = null;
+  let backfillRunning = false;
 
+  // -----------------------------------------------------------------------
+  // Lazy ESM module loaders (dynamic import caches by URL, so repeated
+  // calls are cheap and always return the same module namespace object).
+  // -----------------------------------------------------------------------
   async function loadWhoopClient() {
-    // Imported lazily/dynamically since src/whoop-client.mjs is an ESM
-    // module owned by another part of the build and may not exist yet.
     return import('./src/whoop-client.mjs');
+  }
+  async function loadHistory() {
+    return import('./src/history.mjs');
+  }
+  async function loadAnalytics() {
+    return import('./src/analytics.mjs');
+  }
+  async function loadJournalModule() {
+    return import('./src/journal.mjs');
+  }
+  async function loadCoach() {
+    return import('./src/coach.mjs');
+  }
+  async function loadExport() {
+    return import('./src/export.mjs');
   }
 
   async function getDashboardWithFallback() {
@@ -54,23 +97,61 @@ if (!gotLock) {
     }
   }
 
-  async function refreshDashboard() {
-    const client = await loadWhoopClient();
-    return client.getDashboard({ days: 30 });
+  // -----------------------------------------------------------------------
+  // Settings: userData/settings.json, atomic write, merge on setSettings.
+  // -----------------------------------------------------------------------
+  const DEFAULT_SETTINGS = {
+    launchAtLogin: false,
+    notificationsEnabled: true,
+    morningHour: 8,
+    autoRefreshMins: 15,
+    // Internal, persisted alongside the user-facing settings above: tracks
+    // the anomaly flag's last-known state so we only notify on a
+    // false -> true transition rather than on every refresh.
+    lastAnomalyFlagged: false,
+  };
+
+  let settings = { ...DEFAULT_SETTINGS };
+  let settingsPath = null;
+
+  async function loadSettings() {
+    settingsPath = path.join(app.getPath('userData'), 'settings.json');
+    try {
+      const raw = await fsp.readFile(settingsPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      settings = { ...DEFAULT_SETTINGS, ...parsed };
+    } catch (err) {
+      if (!err || err.code !== 'ENOENT') {
+        console.error('Failed to read settings.json:', err);
+      }
+      settings = { ...DEFAULT_SETTINGS };
+    }
+    return settings;
   }
 
-  ipcMain.handle('whoop:getDashboard', async () => {
-    return getDashboardWithFallback();
-  });
+  async function saveSettingsAtomic() {
+    if (!settingsPath) return;
+    const dir = path.dirname(settingsPath);
+    await fsp.mkdir(dir, { recursive: true });
+    const tmpPath = path.join(dir, `.settings.json.${process.pid}.${Date.now()}.tmp`);
+    await fsp.writeFile(tmpPath, JSON.stringify(settings, null, 2), 'utf8');
+    await fsp.rename(tmpPath, settingsPath);
+  }
 
-  ipcMain.handle('whoop:refresh', async () => {
+  function applyLoginItemSettings() {
+    // Note: setLoginItemSettings only takes effect for the packaged
+    // /Applications app; it is a no-op (or unreliable) when running via
+    // `electron .` in development.
     try {
-      return await refreshDashboard();
+      app.setLoginItemSettings({ openAtLogin: !!settings.launchAtLogin });
     } catch (err) {
-      return { error: String(err) };
+      console.error('Failed to apply login item settings:', err);
     }
-  });
+  }
 
+  // -----------------------------------------------------------------------
+  // Window
+  // -----------------------------------------------------------------------
   function setDockIcon() {
     if (process.platform !== 'darwin') return;
     if (!app.dock) return;
@@ -107,6 +188,10 @@ if (!gotLock) {
       mainWindow.show();
     });
 
+    mainWindow.on('closed', () => {
+      mainWindow = null;
+    });
+
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
     if (isSmoke) {
@@ -114,6 +199,532 @@ if (!gotLock) {
     }
   }
 
+  function showAndFocusWindow() {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
+      return;
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+
+  // -----------------------------------------------------------------------
+  // Renderer push events
+  // -----------------------------------------------------------------------
+  function pushUpdated(dashboard) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('whoop:updated', dashboard);
+    }
+  }
+
+  function pushBackfillProgress(progress) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('whoop:backfillProgress', progress);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Tray (menu-bar presence)
+  // -----------------------------------------------------------------------
+  // Builds a small 16x16 template-style dot icon in-code (a raw BGRA
+  // bitmap, no PNG decoding needed). All opaque pixels are pure black
+  // (R=G=B=0), so BGRA vs RGBA channel order is irrelevant here; on
+  // darwin, marking it a template image lets macOS auto-tint it for the
+  // current menu bar appearance. Falls back to an empty image (title-text
+  // only) if bitmap creation fails for any reason.
+  function buildDotIcon() {
+    try {
+      const size = 16;
+      const buffer = Buffer.alloc(size * size * 4);
+      const cx = size / 2 - 0.5;
+      const cy = size / 2 - 0.5;
+      const radius = 5;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const dx = x - cx;
+          const dy = y - cy;
+          if (dx * dx + dy * dy <= radius * radius) {
+            const idx = (y * size + x) * 4;
+            buffer[idx] = 0; // B
+            buffer[idx + 1] = 0; // G
+            buffer[idx + 2] = 0; // R
+            buffer[idx + 3] = 255; // A
+          }
+        }
+      }
+      const image = nativeImage.createFromBitmap(buffer, { width: size, height: size });
+      if (process.platform === 'darwin') image.setTemplateImage(true);
+      return image;
+    } catch (err) {
+      console.error('Failed to build tray dot icon, falling back to empty image:', err);
+      return nativeImage.createEmpty();
+    }
+  }
+
+  function zoneForScore(score) {
+    if (score == null) return { emoji: '⚪', label: 'No data' };
+    if (score >= 67) return { emoji: '🟢', label: 'green' };
+    if (score >= 34) return { emoji: '🟡', label: 'yellow' };
+    return { emoji: '🔴', label: 'red' };
+  }
+
+  function statsLabelFor(dashboard) {
+    const recovery = Array.isArray(dashboard && dashboard.recovery) ? dashboard.recovery : [];
+    const cycles = Array.isArray(dashboard && dashboard.cycles) ? dashboard.cycles : [];
+    const rec = recovery.find((r) => r.hrv != null || r.rhr != null);
+    const cyc = cycles.find((c) => c.strain != null);
+    const hrv = rec && rec.hrv != null ? Math.round(rec.hrv) : '--';
+    const rhr = rec && rec.rhr != null ? Math.round(rec.rhr) : '--';
+    const strain = cyc && cyc.strain != null ? cyc.strain.toFixed(1) : '--';
+    return `HRV ${hrv} · RHR ${rhr} · Strain ${strain}`;
+  }
+
+  function createTray() {
+    tray = new Tray(buildDotIcon());
+    tray.setToolTip('Whoop+');
+    tray.on('click', showAndFocusWindow);
+    updateTrayMenu();
+  }
+
+  function updateTrayMenu() {
+    if (!tray) return;
+    const menu = Menu.buildFromTemplate([
+      { label: 'Open Whoop+', click: showAndFocusWindow },
+      { label: 'Refresh now', click: () => doRefresh().catch((err) => console.error('Tray refresh failed:', err)) },
+      { type: 'separator' },
+      { label: statsLabelFor(lastDashboardForTray), enabled: false },
+      { type: 'separator' },
+      { label: 'Quit', click: () => app.quit() },
+    ]);
+    tray.setContextMenu(menu);
+  }
+
+  function updateTray(dashboard) {
+    if (!tray) return;
+    lastDashboardForTray = dashboard;
+    const recovery = Array.isArray(dashboard && dashboard.recovery) ? dashboard.recovery : [];
+    const newestScore = recovery.find((r) => r.score != null)?.score ?? null;
+    const zone = zoneForScore(newestScore);
+    const pct = newestScore != null ? `${Math.round(newestScore)}%` : '--';
+    tray.setTitle(`${zone.emoji} ${pct}`);
+    updateTrayMenu();
+  }
+
+  // -----------------------------------------------------------------------
+  // Refresh (manual IPC, auto-refresh timer, and powerMonitor 'resume' all
+  // funnel through here; serialized so overlapping refreshes collapse into
+  // one in-flight call).
+  // -----------------------------------------------------------------------
+  async function doRefresh() {
+    if (refreshInFlight) return refreshInFlight;
+    refreshInFlight = (async () => {
+      try {
+        const client = await loadWhoopClient();
+        const history = await loadHistory();
+        const [dashboard] = await Promise.all([
+          client.getDashboard({ days: 30 }),
+          history.syncRecent({ days: 7 }).catch((err) => {
+            console.error('syncRecent failed during refresh:', err);
+          }),
+        ]);
+        pushUpdated(dashboard);
+        updateTray(dashboard);
+        await checkAnomalyAndNotify();
+        return dashboard;
+      } finally {
+        refreshInFlight = null;
+      }
+    })();
+    return refreshInFlight;
+  }
+
+  function startAutoRefreshTimer() {
+    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+    const mins = Math.max(1, Number(settings.autoRefreshMins) || DEFAULT_SETTINGS.autoRefreshMins);
+    autoRefreshTimer = setInterval(() => {
+      doRefresh().catch((err) => console.error('Auto-refresh failed:', err));
+    }, mins * 60000);
+  }
+
+  // -----------------------------------------------------------------------
+  // Notifications
+  // -----------------------------------------------------------------------
+  function clampHour(h) {
+    const n = Number(h);
+    if (!Number.isFinite(n)) return DEFAULT_SETTINGS.morningHour;
+    return Math.min(23, Math.max(0, Math.round(n)));
+  }
+
+  function scheduleMorningNotification() {
+    if (morningTimer) {
+      clearTimeout(morningTimer);
+      morningTimer = null;
+    }
+    if (!settings.notificationsEnabled) return;
+
+    const now = new Date();
+    const hour = clampHour(settings.morningHour);
+    const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, 0, 0, 0);
+    if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+    const delayMs = next.getTime() - now.getTime();
+
+    morningTimer = setTimeout(() => {
+      sendMorningNotification()
+        .catch((err) => console.error('Morning notification failed:', err))
+        .finally(() => scheduleMorningNotification());
+    }, delayMs);
+  }
+
+  async function sendMorningNotification() {
+    if (!settings.notificationsEnabled) return;
+    if (!Notification.isSupported()) return;
+
+    const analyticsMod = await loadAnalytics();
+    const dashboard = await getDashboardWithFallback();
+    if (!dashboard || dashboard.error) return;
+
+    const recovery = Array.isArray(dashboard.recovery) ? dashboard.recovery : [];
+    const sleep = Array.isArray(dashboard.sleep) ? dashboard.sleep : [];
+    const rec = recovery.find((r) => r.score != null) || null;
+    const sleepRec = sleep.find((s) => s.performancePct != null) || null;
+    const score = rec ? rec.score : null;
+    const target = analyticsMod.strainTargetFor(score);
+
+    const title = score != null ? `Recovery ${Math.round(score)}% — ${target.label || 'Maintain'}` : 'Whoop+ morning summary';
+    const bodyParts = [];
+    if (rec && rec.hrv != null) bodyParts.push(`HRV ${Math.round(rec.hrv)}ms`);
+    if (rec && rec.rhr != null) bodyParts.push(`RHR ${Math.round(rec.rhr)}bpm`);
+    if (sleepRec && sleepRec.performancePct != null) bodyParts.push(`Sleep ${Math.round(sleepRec.performancePct)}%`);
+    if (target.low != null && target.high != null) bodyParts.push(`Strain target ${target.low}-${target.high}`);
+
+    new Notification({ title, body: bodyParts.join(' · ') || 'Open Whoop+ for today’s details.' }).show();
+  }
+
+  async function checkAnomalyAndNotify() {
+    try {
+      const history = await loadHistory();
+      const analyticsMod = await loadAnalytics();
+      const full = await history.getHistory({ days: 0 });
+      const result = analyticsMod.anomaly({ recovery: full.recovery, sleep: full.sleep }, { days: 28 });
+
+      const wasFlagged = !!settings.lastAnomalyFlagged;
+      if (result.flagged && !wasFlagged && settings.notificationsEnabled && Notification.isSupported()) {
+        new Notification({
+          title: 'Whoop+ anomaly detected',
+          body: result.reasons.length ? result.reasons.join(' ') : 'Your recovery metrics look unusual today.',
+        }).show();
+      }
+
+      if (result.flagged !== wasFlagged) {
+        settings.lastAnomalyFlagged = result.flagged;
+        await saveSettingsAtomic();
+      }
+    } catch (err) {
+      console.error('Anomaly check failed:', err);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Analytics / backfill-status (shared by IPC handlers and --ipc-check)
+  // -----------------------------------------------------------------------
+  function trimNote(note) {
+    if (typeof note !== 'string') return note;
+    return note.length > 400 ? `${note.slice(0, 400)}…` : note;
+  }
+
+  async function fetchAnalytics(days = 30) {
+    const historyMod = await loadHistory();
+    const analyticsMod = await loadAnalytics();
+
+    let data = await historyMod.getHistory({ days: 0 });
+    const isEmpty = !data.recovery.length && !data.sleep.length && !data.cycles.length && !data.workouts.length;
+    if (isEmpty) {
+      const dashboard = await getDashboardWithFallback();
+      if (dashboard && !dashboard.error) {
+        data = {
+          profile: dashboard.profile,
+          recovery: dashboard.recovery || [],
+          sleep: dashboard.sleep || [],
+          cycles: dashboard.cycles || [],
+          workouts: dashboard.workouts || [],
+        };
+      }
+    }
+
+    const { recovery, sleep, cycles } = data;
+    const journalEntries = journalStore ? await journalStore.listEntries({}) : [];
+
+    const deviations = {
+      hrv: analyticsMod.deviation(recovery, 'hrv', { days }),
+      rhr: analyticsMod.deviation(recovery, 'rhr', { days }),
+      spo2: analyticsMod.deviation(recovery, 'spo2', { days }),
+      skinTempC: analyticsMod.deviation(recovery, 'skinTempC', { days }),
+      respiratoryRateBpm: analyticsMod.deviation(sleep, 'respiratoryRateBpm', { days }),
+    };
+    const newestScore = recovery.find((r) => r.score != null)?.score ?? null;
+
+    return {
+      deviations,
+      hrvBaseline: analyticsMod.rollingBaseline(recovery, 'hrv', { days: 90 }),
+      rhrBaseline: analyticsMod.rollingBaseline(recovery, 'rhr', { days: 90 }),
+      strainTarget: analyticsMod.strainTargetFor(newestScore),
+      acwr: analyticsMod.acwr(cycles),
+      sleepDebt: analyticsMod.sleepDebtSeries(sleep),
+      anomaly: analyticsMod.anomaly({ recovery, sleep }, { days }),
+      compare7v7: analyticsMod.periodCompare({ recovery, sleep, cycles }, { aDays: 7, bDays: 7 }),
+      insights: analyticsMod.correlate(journalEntries, recovery),
+    };
+  }
+
+  async function fetchBackfillStatus() {
+    const historyMod = await loadHistory();
+    const status = await historyMod.getStatus();
+    return { ...status, running: backfillRunning };
+  }
+
+  async function buildCoachContext() {
+    const historyMod = await loadHistory();
+    const analyticsMod = await loadAnalytics();
+
+    const full = await historyMod.getHistory({ days: 0 });
+    const recent = await historyMod.getHistory({ days: 14 });
+
+    const deviations = {
+      hrv: analyticsMod.deviation(full.recovery, 'hrv', { days: 28 }),
+      rhr: analyticsMod.deviation(full.recovery, 'rhr', { days: 28 }),
+      spo2: analyticsMod.deviation(full.recovery, 'spo2', { days: 28 }),
+      skinTempC: analyticsMod.deviation(full.recovery, 'skinTempC', { days: 28 }),
+      respiratoryRateBpm: analyticsMod.deviation(full.sleep, 'respiratoryRateBpm', { days: 28 }),
+    };
+    const acwrResult = analyticsMod.acwr(full.cycles);
+    const debtSeries = analyticsMod.sleepDebtSeries(full.sleep);
+    const cumulativeSleepDebtMin = debtSeries.length ? debtSeries[debtSeries.length - 1].cumulative7dMin : null;
+    const newestScore = full.recovery.find((r) => r.score != null)?.score ?? null;
+    const strainTarget = analyticsMod.strainTargetFor(newestScore);
+    const journalEntries = journalStore ? await journalStore.listEntries({ days: 14 }) : [];
+
+    return {
+      profile: recent.profile,
+      recovery: recent.recovery.map((r) => ({ date: r.date, score: r.score, hrv: r.hrv, rhr: r.rhr })),
+      sleep: recent.sleep.map((s) => ({ date: s.date, performancePct: s.performancePct, durationMin: s.durationMin, debtMin: s.debtMin })),
+      cycles: recent.cycles.map((c) => ({ date: c.date, strain: c.strain })),
+      deviations,
+      acwr: acwrResult,
+      cumulativeSleepDebtMin,
+      journal: journalEntries.map((e) => ({ date: e.date, tags: e.tags, note: trimNote(e.note) })),
+      strainTarget,
+    };
+  }
+
+  // -----------------------------------------------------------------------
+  // IPC handlers
+  // -----------------------------------------------------------------------
+  ipcMain.handle('whoop:getDashboard', async () => {
+    return getDashboardWithFallback();
+  });
+
+  ipcMain.handle('whoop:refresh', async () => {
+    try {
+      return await doRefresh();
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:getHistory', async (event, opts) => {
+    try {
+      const historyMod = await loadHistory();
+      return await historyMod.getHistory(opts || {});
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:getBackfillStatus', async () => {
+    try {
+      return await fetchBackfillStatus();
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:getAnalytics', async (event, opts) => {
+    try {
+      return await fetchAnalytics((opts && opts.days) || 30);
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:getJournal', async (event, opts) => {
+    try {
+      if (!journalStore) throw new Error('Journal store not initialized yet');
+      return await journalStore.listEntries(opts || {});
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:addJournalEntry', async (event, entry) => {
+    try {
+      if (!journalStore) throw new Error('Journal store not initialized yet');
+      return await journalStore.addEntry(entry || {});
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:updateJournalEntry', async (event, id, patch) => {
+    try {
+      if (!journalStore) throw new Error('Journal store not initialized yet');
+      return await journalStore.updateEntry(id, patch || {});
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:deleteJournalEntry', async (event, id) => {
+    try {
+      if (!journalStore) throw new Error('Journal store not initialized yet');
+      return await journalStore.removeEntry(id);
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:journalTags', async () => {
+    try {
+      const journalMod = await loadJournalModule();
+      return journalMod.SUGGESTED_TAGS;
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:coachStatus', async () => {
+    try {
+      const coach = await loadCoach();
+      return await coach.coachStatus();
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:askCoach', async (event, { question, history: chatHistory } = {}) => {
+    try {
+      const coach = await loadCoach();
+      const context = await buildCoachContext();
+      return await coach.askCoach({ question, history: chatHistory, context });
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:exportCsv', async (event, { kind } = {}) => {
+    try {
+      const exportMod = await loadExport();
+      const outDir = path.join(os.homedir(), 'Downloads');
+      let records;
+      if (kind === 'journal') {
+        if (!journalStore) throw new Error('Journal store not initialized yet');
+        records = await journalStore.listEntries({});
+      } else {
+        const historyMod = await loadHistory();
+        const data = await historyMod.getHistory({ days: 0 });
+        records = data[kind];
+        if (!records) throw new Error(`Unknown export kind: "${kind}"`);
+      }
+      return await exportMod.exportCsv({ kind, records, outDir });
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:getSettings', async () => {
+    try {
+      return { ...settings };
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:setSettings', async (event, patch) => {
+    try {
+      settings = { ...settings, ...(patch || {}) };
+      await saveSettingsAtomic();
+      if (patch) {
+        if ('launchAtLogin' in patch) applyLoginItemSettings();
+        if ('morningHour' in patch || 'notificationsEnabled' in patch) scheduleMorningNotification();
+        if ('autoRefreshMins' in patch) startAutoRefreshTimer();
+      }
+      return { ...settings };
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // --ipc-check: exercises the main-process IPC handler logic directly
+  // (no renderer needed), for verifying this side of the IPC contract
+  // independently of renderer state. Prints one "<name>: ok" or
+  // "<name>: error: <message>" line per check.
+  // -----------------------------------------------------------------------
+  async function runIpcCheck() {
+    const results = [];
+    async function check(name, fn) {
+      try {
+        await fn();
+        results.push(`${name}: ok`);
+      } catch (err) {
+        results.push(`${name}: error: ${err && err.message ? err.message : err}`);
+      }
+    }
+
+    await check('getAnalytics', async () => {
+      const result = await fetchAnalytics(30);
+      if (result && result.error) throw new Error(result.error);
+      if (!result || !result.deviations || !result.acwr) throw new Error('unexpected shape');
+    });
+
+    await check('getBackfillStatus', async () => {
+      const result = await fetchBackfillStatus();
+      if (result && result.error) throw new Error(result.error);
+      if (typeof result.running !== 'boolean') throw new Error('missing running flag');
+    });
+
+    await check('journal add/list/delete round-trip', async () => {
+      const journalMod = await loadJournalModule();
+      const tmpDir = path.join(os.tmpdir(), `whoop-desk-ipc-check-journal-${process.pid}-${Date.now()}`);
+      const tmpJournal = await journalMod.initJournal({ dataDir: tmpDir });
+      const entry = await tmpJournal.addEntry({ date: '2026-01-01', tags: ['stress'], note: 'ipc-check' });
+      const listed = await tmpJournal.listEntries({});
+      if (!listed.find((e) => e.id === entry.id)) throw new Error('added entry not found in listEntries');
+      const removed = await tmpJournal.removeEntry(entry.id);
+      if (!removed) throw new Error('removeEntry returned false');
+    });
+
+    await check('exportCsv', async () => {
+      const exportMod = await loadExport();
+      const historyMod = await loadHistory();
+      const data = await historyMod.getHistory({ days: 0 });
+      const tmpDir = path.join(os.tmpdir(), `whoop-desk-ipc-check-export-${process.pid}-${Date.now()}`);
+      const result = await exportMod.exportCsv({ kind: 'recovery', records: data.recovery, outDir: tmpDir });
+      if (!result || !result.path) throw new Error('exportCsv returned no path');
+    });
+
+    await check('coachStatus', async () => {
+      const coach = await loadCoach();
+      const status = await coach.coachStatus();
+      if (!status || typeof status.available !== 'boolean') throw new Error('unexpected shape');
+    });
+
+    for (const line of results) console.log(line);
+  }
+
+  // -----------------------------------------------------------------------
+  // Smoke mode (screenshot + console-error capture)
+  // -----------------------------------------------------------------------
   function runSmokeMode(win) {
     const consoleErrors = [];
 
@@ -173,19 +784,61 @@ if (!gotLock) {
     });
   }
 
-  app.whenReady().then(() => {
+  // -----------------------------------------------------------------------
+  // App lifecycle
+  // -----------------------------------------------------------------------
+  app.whenReady().then(async () => {
+    await loadSettings();
+
+    const dataDir = app.getPath('userData');
+    const historyMod = await loadHistory();
+    historyMod.initHistory({ dataDir });
+    const journalMod = await loadJournalModule();
+    journalStore = await journalMod.initJournal({ dataDir });
+
+    if (isIpcCheck) {
+      await runIpcCheck();
+      app.exit(0);
+      return;
+    }
+
     setDockIcon();
+    applyLoginItemSettings();
     createWindow();
+    createTray();
+    startAutoRefreshTimer();
+    scheduleMorningNotification();
+
+    powerMonitor.on('resume', () => {
+      doRefresh().catch((err) => console.error('Refresh on resume failed:', err));
+    });
 
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-      }
+      showAndFocusWindow();
     });
+
+    // Init: if the local history store isn't fully backfilled yet, run the
+    // (resumable) backfill in the background, forwarding progress events to
+    // the renderer, then push a fresh dashboard once it completes.
+    historyMod
+      .getStatus()
+      .then((status) => {
+        if (status.backfillComplete) return;
+        backfillRunning = true;
+        historyMod
+          .backfillAll({ onProgress: (progress) => pushBackfillProgress(progress) })
+          .catch((err) => console.error('Background backfill failed:', err))
+          .finally(() => {
+            backfillRunning = false;
+            doRefresh().catch((err) => console.error('Post-backfill refresh failed:', err));
+          });
+      })
+      .catch((err) => console.error('Failed to read backfill status:', err));
   });
 
   app.on('window-all-closed', () => {
-    // Standard window close quits the app; no tray/background complexity.
+    // Standard window close quits the app; the tray is a menu-bar readout
+    // alongside the dock app, not a background-only mode.
     app.quit();
   });
 }

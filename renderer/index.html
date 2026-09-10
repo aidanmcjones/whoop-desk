@@ -82,19 +82,43 @@
             </svg>
             <span>Trends</span>
           </button>
+          <button id="nav-journal" class="nav-item" type="button" data-view="journal">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <rect x="3.5" y="2.5" width="13" height="15" rx="2" stroke="currentColor" stroke-width="1.7" />
+              <path d="M6.5 6.5h7M6.5 10h7M6.5 13.5h4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+            </svg>
+            <span>Journal</span>
+          </button>
+          <button id="nav-coach" class="nav-item" type="button" data-view="coach">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M3.2 5.6a2.2 2.2 0 0 1 2.2-2.2h9.2a2.2 2.2 0 0 1 2.2 2.2v6a2.2 2.2 0 0 1-2.2 2.2H9.6l-3.8 3v-3H5.4a2.2 2.2 0 0 1-2.2-2.2Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
+              <circle cx="7.2" cy="8.6" r="0.9" fill="currentColor" />
+              <circle cx="10" cy="8.6" r="0.9" fill="currentColor" />
+              <circle cx="12.8" cy="8.6" r="0.9" fill="currentColor" />
+            </svg>
+            <span>Coach</span>
+          </button>
         </nav>
 
         <div class="sidebar-foot">
           <div class="unavailable-card">
             <p class="micro-label">Not available</p>
-            <p class="unavailable-body">Coach, Journal, Community, Stress &amp; WHOOP Age have no public WHOOP API.</p>
+            <p class="unavailable-body">Community, Stress &amp; WHOOP Age have no public WHOOP API.</p>
           </div>
+          <p id="backfill-indicator" class="backfill-indicator" hidden></p>
           <button id="refresh-btn" class="refresh-btn" type="button" hidden>
             <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <path d="M16.5 10a6.5 6.5 0 1 1-1.94-4.64" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
               <path d="M16.7 3.3v4.2h-4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
             </svg>
             <span>Refresh</span>
+          </button>
+          <button id="settings-btn" class="settings-btn" type="button">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <circle cx="10" cy="10" r="2.6" stroke="currentColor" stroke-width="1.7" />
+              <path d="M10 2.6v2M10 15.4v2M17.4 10h-2M4.6 10h-2M15.2 4.8l-1.4 1.4M6.2 13.8l-1.4 1.4M15.2 15.2l-1.4-1.4M6.2 6.2 4.8 4.8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+            </svg>
+            <span>Settings</span>
           </button>
           <p id="last-updated" class="last-updated"></p>
         </div>
@@ -114,6 +138,7 @@
           <div class="content-inner">
 
             <section id="view-overview" class="view grid-12">
+              <div id="anomaly-banner" class="span-12" hidden></div>
               <div id="recovery-hero" class="card span-4 hero-card"></div>
               <div id="strain-card-overview" class="card span-4 hero-card"></div>
               <div id="sleep-summary-card" class="card span-4 hero-card"></div>
@@ -128,6 +153,8 @@
               <div id="sleep-stage-card" class="card span-4"></div>
               <div id="sleep-stats-card" class="card span-5"></div>
               <div id="sleep-trend-card" class="card span-7"></div>
+              <div id="sleep-respiratory-card" class="card span-6"></div>
+              <div id="sleep-debt-card" class="card span-6"></div>
               <div id="sleep-breakdown-card" class="card span-12"></div>
             </section>
 
@@ -135,6 +162,8 @@
               <div id="strain-hero" class="card span-4 hero-card"></div>
               <div id="strain-stats-card" class="card span-4"></div>
               <div id="workouts-card" class="card span-4"></div>
+              <div id="strain-acwr-card" class="card span-4"></div>
+              <div id="strain-zones-card" class="card span-8"></div>
               <div id="strain-trend-card" class="card span-8"></div>
               <div id="calories-trend-card" class="card span-4"></div>
             </section>
@@ -154,6 +183,9 @@
                 <div id="trends-range-toggle" class="segmented">
                   <button id="range-7d" class="segmented-btn active" type="button" data-range="7">7D</button>
                   <button id="range-30d" class="segmented-btn" type="button" data-range="30">30D</button>
+                  <button id="range-90d" class="segmented-btn" type="button" data-range="90">90D</button>
+                  <button id="range-6m" class="segmented-btn" type="button" data-range="182">6M</button>
+                  <button id="range-ytd" class="segmented-btn" type="button" data-range="ytd">YTD</button>
                 </div>
               </div>
               <div class="span-8 stack">
@@ -164,7 +196,41 @@
                 <div id="trend-strain" class="card"></div>
               </div>
               <div class="span-4 stack">
+                <div id="trend-compare" class="card"></div>
                 <div id="trend-dashboard" class="card"></div>
+                <div id="trend-export-card" class="card">
+                  <div class="card-head"><span class="micro-label">Export CSV</span></div>
+                  <div id="trends-export-group" class="export-group">
+                    <button class="export-btn" type="button" data-kind="recovery">Recovery</button>
+                    <button class="export-btn" type="button" data-kind="sleep">Sleep</button>
+                    <button class="export-btn" type="button" data-kind="cycles">Cycles</button>
+                    <button class="export-btn" type="button" data-kind="workouts">Workouts</button>
+                    <button class="export-btn" type="button" data-kind="journal">Journal</button>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section id="view-journal" class="view grid-12" hidden>
+              <div id="journal-add-card" class="card span-12"></div>
+              <div id="journal-insights-card" class="card span-4"></div>
+              <div id="journal-entries-card" class="card span-8"></div>
+            </section>
+
+            <section id="view-coach" class="view grid-12" hidden>
+              <div id="coach-card" class="card span-12 coach-card">
+                <div id="coach-gate-card" class="coach-gate" hidden></div>
+                <div id="coach-chat" class="coach-chat" hidden>
+                  <div id="coach-messages" class="coach-messages"></div>
+                  <div id="coach-thinking" class="coach-thinking" hidden>
+                    <span></span><span></span><span></span>
+                  </div>
+                  <form id="coach-input-form" class="coach-input-form">
+                    <input id="coach-input" class="coach-input" type="text" placeholder="Ask about your recovery, sleep, or strain&hellip;" autocomplete="off" />
+                    <button id="coach-send-btn" class="coach-send-btn" type="submit">Send</button>
+                  </form>
+                  <p class="coach-disclaimer">Coach uses your recent Whoop data to answer. Not medical advice.</p>
+                </div>
               </div>
             </section>
 
@@ -172,6 +238,20 @@
         </main>
       </div>
     </div>
+
+    <!-- Settings panel: modal overlay toggled by #settings-btn -->
+    <div id="settings-overlay" class="settings-overlay" hidden>
+      <div id="settings-panel" class="settings-panel" role="dialog" aria-label="Settings">
+        <div class="settings-head">
+          <span class="micro-label">Settings</span>
+          <button id="settings-close-btn" class="settings-close-btn" type="button" aria-label="Close">&times;</button>
+        </div>
+        <div id="settings-body" class="settings-body"></div>
+      </div>
+    </div>
+
+    <!-- CSV export toast -->
+    <div id="toast" class="toast" hidden></div>
   </div>
 
   <script src="./app.js"></script>

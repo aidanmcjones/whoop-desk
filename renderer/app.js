@@ -11,20 +11,35 @@
    Element contract expected from index.html:
      #reconnect-state, #reconnect-message, #reconnect-retry-btn
      #main-shell, #sidebar, #nav, .nav-item[data-view], #refresh-btn,
-     #last-updated
+     #last-updated, #backfill-indicator, #settings-btn
      #top-bar, #greeting, #selected-date, #day-strip
      #content, .view (#view-overview/#view-sleep/#view-strain/
-                      #view-health/#view-trends)
-     overview: #recovery-hero #strain-card-overview #sleep-summary-card
-               #metric-cards #overview-trend #overview-activities
+                      #view-health/#view-trends/#view-journal/#view-coach)
+     overview: #anomaly-banner #recovery-hero #strain-card-overview
+               #sleep-summary-card #metric-cards #overview-trend
+               #overview-activities
      sleep:    #sleep-hero #sleep-hours-card #sleep-stage-card
-               #sleep-stats-card #sleep-trend-card #sleep-breakdown-card
+               #sleep-stats-card #sleep-trend-card #sleep-respiratory-card
+               #sleep-debt-card #sleep-breakdown-card
      strain:   #strain-hero #strain-stats-card #workouts-card
-               #strain-trend-card #calories-trend-card
+               #strain-acwr-card #strain-zones-card #strain-trend-card
+               #calories-trend-card
      health:   #health-hero #health-tiles #health-table
-     trends:   #trends-range-toggle #range-7d #range-30d
-               #trend-recovery #trend-hrv #trend-rhr #trend-sleep
-               #trend-strain #trend-dashboard
+     trends:   #trends-range-toggle #range-7d #range-30d #range-90d
+               #range-6m #range-ytd #trend-recovery #trend-hrv #trend-rhr
+               #trend-sleep #trend-strain #trend-compare #trend-dashboard
+               #trends-export-group .export-btn[data-kind]
+     journal:  #journal-add-card #journal-insights-card
+               #journal-entries-card (composer/list ids built dynamically:
+               #journal-date-input #journal-tag-chips
+               #journal-custom-tag-input #journal-add-tag-btn
+               #journal-note-input #journal-save-btn #journal-cancel-btn)
+     coach:    #coach-gate-card #coach-chat #coach-messages
+               #coach-thinking #coach-input-form #coach-input
+               #coach-send-btn
+     settings: #settings-overlay #settings-panel #settings-close-btn
+               #settings-body (fields built dynamically)
+     global:   #toast
    --------------------------------------------------------------- */
 
 (function () {
@@ -58,8 +73,21 @@
     workoutsByDate: {},
     selectedIndex: 0,
     activeView: 'overview',
-    trendRange: 7,
+    trendRange: 7, // number of days, or the string 'ytd'
+    settings: null,
+    backfillStatus: null,
+    coachStatus: null,
+    coachHistory: [], // [{role:'user'|'assistant', content}]
+    coachBusy: false,
+    journalTagsCache: null,
+    journalEntriesCache: [],
+    editingJournalId: null,
   };
+
+  var SUGGESTED_TAGS = [
+    'alcohol', 'caffeine-late', 'late-meal', 'travel', 'sick', 'stress',
+    'late-screen', 'early-workout', 'sauna', 'reading-before-bed',
+  ];
 
   // Charts are declared as slots while a card's HTML is built, then filled
   // once the slot is in the DOM and its real pixel width is measurable.
@@ -117,6 +145,12 @@
     if (!isNum(v)) return '--';
     var s = v.toFixed(decimals || 1);
     return (v > 0 ? '+' : '') + s;
+  }
+
+  function escapeHTML(str) {
+    return String(str == null ? '' : str).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
   }
 
   function parseLocalDate(dateStr) {
@@ -552,10 +586,35 @@
     state.workoutsByDate = byWorkouts;
   }
 
+  // Window of `count` dates ending at the given list index (oldest -> newest).
+  function windowDatesFromIndex(idx, count, offset) {
+    var from = idx + (offset || 0);
+    return state.dateList.slice(from, from + count).slice().reverse();
+  }
+
   // Window of `count` dates ending at the selected day (oldest -> newest).
   function windowDates(count, offset) {
-    var from = state.selectedIndex + (offset || 0);
-    return state.dateList.slice(from, from + count).slice().reverse();
+    return windowDatesFromIndex(state.selectedIndex, count, offset);
+  }
+
+  function windowDatesFromDate(dateStr, count, offset) {
+    var idx = state.dateList.indexOf(dateStr);
+    if (idx === -1) return [];
+    return windowDatesFromIndex(idx, count, offset);
+  }
+
+  function addDaysISO(dateStr, delta) {
+    var d = parseLocalDate(dateStr);
+    d.setDate(d.getDate() + delta);
+    var y = d.getFullYear();
+    var m = String(d.getMonth() + 1).padStart(2, '0');
+    var day = String(d.getDate()).padStart(2, '0');
+    return y + '-' + m + '-' + day;
+  }
+
+  function todayISO() {
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   }
 
   function valuesFor(dates, source, field) {
@@ -573,6 +632,459 @@
       var s = state.byDate.sleep[d];
       return s && s.stages && isNum(s.stages[key]) ? s.stages[key] : null;
     });
+  }
+
+  /* ---------------- IPC bridge + mock fallback ---------------- */
+
+  // Every window.whoop.* call is routed through here: if the real bridge
+  // exposes the method, use it; otherwise (mock mode, or a bridge that
+  // hasn't wired this method yet) fall back to a client-side emulation
+  // built from mock-data.json + localStorage. Every call resolves to a
+  // value or an {error} object — never throws.
+  //
+  // A bounded timeout guards every real-bridge call: renderOverview/
+  // renderSleep/etc. await this before filling in their core (non-analytics)
+  // card HTML, so a slow or hung IPC call (e.g. getAnalytics blocking on a
+  // live network fetch with no local cache yet) must never be allowed to
+  // stall the whole view indefinitely — it degrades to an {error} result
+  // instead, same as any other failure, and the view renders with "--"
+  // placeholders for the parts that didn't arrive in time.
+  var API_TIMEOUT_MS = 6000;
+
+  function withTimeout(promise, ms) {
+    return new Promise(function (resolve) {
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        resolve({ error: true, message: 'Timed out waiting for a response.' });
+      }, ms);
+      promise.then(
+        function (val) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(val);
+        },
+        function (err) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve({ error: true, message: (err && err.message) || 'Something went wrong.' });
+        }
+      );
+    });
+  }
+
+  async function callApi(name, args, mockFn) {
+    args = args || [];
+    try {
+      if (window.whoop && typeof window.whoop[name] === 'function') {
+        return await withTimeout(window.whoop[name].apply(window.whoop, args), API_TIMEOUT_MS);
+      }
+      return await mockFn.apply(null, args);
+    } catch (err) {
+      return { error: true, message: (err && err.message) || 'Something went wrong.' };
+    }
+  }
+
+  function lsGet(key, fallback) {
+    try {
+      var raw = localStorage.getItem(key);
+      return raw == null ? fallback : JSON.parse(raw);
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  function lsSet(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) { /* ignore (private mode / quota) */ }
+  }
+
+  var LS_JOURNAL = 'whoopdesk.mock.journal';
+  var LS_SETTINGS = 'whoopdesk.mock.settings';
+  var LS_DISMISSED = 'whoopdesk.mock.dismissedAnomalies';
+
+  function mockJournalEntries() {
+    var stored = lsGet(LS_JOURNAL, null);
+    if (stored == null) {
+      stored = (state.data && Array.isArray(state.data.journal)) ? state.data.journal.slice() : [];
+      lsSet(LS_JOURNAL, stored);
+    }
+    return stored;
+  }
+
+  function mockJournalSave(entries) {
+    lsSet(LS_JOURNAL, entries);
+  }
+
+  function journalSort(entries) {
+    return entries.slice().sort(function (a, b) {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      var ac = a.createdAt || '', bc = b.createdAt || '';
+      return ac === bc ? 0 : (ac < bc ? 1 : -1);
+    });
+  }
+
+  function mockGetJournal(args) {
+    var days = args && args.days;
+    var entries = mockJournalEntries();
+    if (days) {
+      var ref = state.dateList[0] || todayISO();
+      var cutoff = addDaysISO(ref, -(days - 1));
+      entries = entries.filter(function (e) { return e.date >= cutoff; });
+    }
+    return { entries: journalSort(entries) };
+  }
+
+  function mockAddJournalEntry(payload) {
+    payload = payload || {};
+    var entries = mockJournalEntries();
+    var entry = {
+      id: 'local-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+      date: payload.date || state.dateList[0] || todayISO(),
+      tags: Array.isArray(payload.tags) ? payload.tags.slice() : [],
+      note: payload.note || '',
+      createdAt: new Date().toISOString(),
+    };
+    entries.push(entry);
+    mockJournalSave(entries);
+    return entry;
+  }
+
+  function mockUpdateJournalEntry(id, patch) {
+    var entries = mockJournalEntries();
+    var idx = entries.findIndex(function (e) { return e.id === id; });
+    if (idx === -1) return null;
+    var updated = Object.assign({}, entries[idx], patch || {}, { id: entries[idx].id });
+    entries[idx] = updated;
+    mockJournalSave(entries);
+    return updated;
+  }
+
+  function mockDeleteJournalEntry(id) {
+    var entries = mockJournalEntries();
+    var idx = entries.findIndex(function (e) { return e.id === id; });
+    if (idx === -1) return false;
+    entries.splice(idx, 1);
+    mockJournalSave(entries);
+    return true;
+  }
+
+  function mockJournalTags() {
+    var set = {};
+    SUGGESTED_TAGS.forEach(function (t) { set[t] = true; });
+    mockJournalEntries().forEach(function (e) { (e.tags || []).forEach(function (t) { set[t] = true; }); });
+    return Object.keys(set);
+  }
+
+  function mockGetHistory(args) {
+    var days = args && args.days;
+    var data = state.data || {};
+    function filterArr(arr) {
+      if (!days) return (arr || []).slice();
+      var ref = state.dateList[0];
+      if (!ref) return (arr || []).slice();
+      var cutoff = addDaysISO(ref, -(days - 1));
+      return (arr || []).filter(function (r) { return r.date && r.date >= cutoff; });
+    }
+    return {
+      profile: data.profile || null,
+      recovery: filterArr(data.recovery),
+      sleep: filterArr(data.sleep),
+      cycles: filterArr(data.cycles),
+      workouts: filterArr(data.workouts),
+    };
+  }
+
+  function mockGetBackfillStatus() {
+    return (state.data && state.data.backfillStatus) ||
+      { backfillComplete: true, running: false, counts: {}, oldestDate: null };
+  }
+
+  function meanSd(values) {
+    var present = values.filter(isNum);
+    if (!present.length) return { mean: null, sd: null, n: 0 };
+    var n = present.length;
+    var mean = present.reduce(function (a, b) { return a + b; }, 0) / n;
+    var variance = n > 1
+      ? present.reduce(function (a, b) { return a + (b - mean) * (b - mean); }, 0) / (n - 1)
+      : 0;
+    return { mean: mean, sd: Math.sqrt(variance), n: n };
+  }
+
+  function deviationFor(value, baselineValues, decimals) {
+    var d = isNum(decimals) ? decimals : 1;
+    var ms = meanSd(baselineValues);
+    var out = {
+      value: isNum(value) ? Number(value.toFixed(d)) : null,
+      mean: isNum(ms.mean) ? Number(ms.mean.toFixed(d)) : null,
+      sd: isNum(ms.sd) ? Number(ms.sd.toFixed(Math.max(d, 2))) : null,
+      z: null,
+      pctDelta: null,
+    };
+    if (!isNum(value) || !isNum(ms.mean) || ms.n < 3) return out;
+    if (ms.sd > 0) out.z = Number(((value - ms.mean) / ms.sd).toFixed(2));
+    else out.z = 0;
+    if (ms.mean !== 0) out.pctDelta = Number((((value - ms.mean) / Math.abs(ms.mean)) * 100).toFixed(1));
+    return out;
+  }
+
+  function rollingBaseline(dates, source, field, windowSize) {
+    windowSize = windowSize || 7;
+    return dates.map(function (d) {
+      var idx = state.dateList.indexOf(d);
+      if (idx === -1) return { date: d, mean: null, sd: null, n: 0 };
+      var slice = state.dateList.slice(idx, idx + windowSize);
+      var vals = slice.map(function (dd) {
+        var rec = state.byDate[source][dd];
+        return rec && isNum(rec[field]) ? rec[field] : null;
+      });
+      var ms = meanSd(vals);
+      return {
+        date: d,
+        mean: isNum(ms.mean) ? Number(ms.mean.toFixed(1)) : null,
+        sd: isNum(ms.sd) ? Number(ms.sd.toFixed(2)) : null,
+        n: ms.n,
+      };
+    });
+  }
+
+  function strainTargetFor(score) {
+    if (!isNum(score)) return { low: null, high: null, center: null, label: 'No recovery data yet' };
+    if (score >= 67) return { low: 14, high: 18, center: 16, label: 'Push it — high recovery' };
+    if (score >= 34) return { low: 10, high: 14, center: 12, label: 'Maintain — moderate recovery' };
+    return { low: 4, high: 8, center: 6, label: 'Take it easy — low recovery' };
+  }
+
+  function mockAcwr() {
+    var acuteDates = windowDates(7, 1);
+    var chronicDates = windowDates(28, 1);
+    var acuteVals = valuesFor(acuteDates, 'cycle', 'strain');
+    var chronicVals = valuesFor(chronicDates, 'cycle', 'strain');
+    var acutePresent = acuteVals.filter(isNum);
+    var chronicPresent = chronicVals.filter(isNum);
+    if (acutePresent.length < 3 || chronicPresent.length < 14) return { insufficient: true };
+    var acute7 = avgOf(acuteVals, 2);
+    var chronic28 = avgOf(chronicVals, 2);
+    var ratio = (isNum(acute7) && isNum(chronic28) && chronic28 > 0)
+      ? Number((acute7 / chronic28).toFixed(2)) : null;
+    var zone = null;
+    if (isNum(ratio)) {
+      zone = ratio < 0.8 ? 'undertraining'
+        : ratio <= 1.3 ? 'optimal'
+        : ratio <= 1.5 ? 'high'
+        : 'danger';
+    }
+    return { acute7: acute7, chronic28: chronic28, ratio: ratio, zone: zone };
+  }
+
+  function mockSleepDebt(days) {
+    var dates = windowDates(days);
+    var rolling = [];
+    return dates.map(function (d) {
+      var s = state.byDate.sleep[d];
+      var debt = s && isNum(s.debtMin) ? s.debtMin : null;
+      rolling.push(isNum(debt) ? debt : 0);
+      if (rolling.length > 7) rolling.shift();
+      var cum7 = rolling.reduce(function (a, b) { return a + b; }, 0);
+      return { date: d, debtMin: debt, cumulative7dMin: Math.round(cum7) };
+    });
+  }
+
+  var DEVIATION_LABELS = {
+    hrv: 'HRV', rhr: 'Resting heart rate', spo2: 'Blood oxygen',
+    skinTempC: 'Skin temperature', respiratoryRateBpm: 'Respiratory rate',
+  };
+
+  function mockAnomaly(deviations) {
+    var reasons = [], score = 0;
+    Object.keys(deviations).forEach(function (k) {
+      var d = deviations[k];
+      if (isNum(d.z) && Math.abs(d.z) >= 2) {
+        score += Math.abs(d.z);
+        reasons.push((DEVIATION_LABELS[k] || k) + ' is unusually ' + (d.z > 0 ? 'high' : 'low') + ' vs. your baseline');
+      }
+    });
+    return { flagged: reasons.length > 0, score: Number(score.toFixed(2)), reasons: reasons };
+  }
+
+  function compareField(source, field, decimals, transform) {
+    var tf = transform || function (v) { return v; };
+    var a = avgOf(valuesFor(windowDates(7), source, field).map(tf), decimals);
+    var b = avgOf(valuesFor(windowDates(7, 7), source, field).map(tf), decimals);
+    var delta = (isNum(a) && isNum(b)) ? Number((a - b).toFixed(decimals)) : null;
+    var pctDelta = (isNum(a) && isNum(b) && b !== 0) ? Number((((a - b) / Math.abs(b)) * 100).toFixed(1)) : null;
+    return { a: a, b: b, delta: delta, pctDelta: pctDelta };
+  }
+
+  function mockInsights() {
+    var entries = mockJournalEntries();
+    var tagStats = {};
+    entries.forEach(function (e) {
+      var nextDate = addDaysISO(e.date, 1);
+      var nextRec = state.byDate.recovery[nextDate];
+      if (!nextRec || !isNum(nextRec.score)) return;
+      var base = avgOf(valuesFor(windowDatesFromDate(e.date, 14), 'recovery', 'score'), 0);
+      if (!isNum(base)) return;
+      var delta = nextRec.score - base;
+      (e.tags || []).forEach(function (tag) {
+        if (!tagStats[tag]) tagStats[tag] = [];
+        tagStats[tag].push(delta);
+      });
+    });
+    return Object.keys(tagStats).map(function (tag) {
+      var deltas = tagStats[tag];
+      var avg = avgOf(deltas, 1);
+      return {
+        tag: tag, n: deltas.length, avgNextDayRecoveryDelta: avg,
+        direction: !isNum(avg) ? 'neutral' : (avg >= 0 ? 'positive' : 'negative'),
+      };
+    }).sort(function (a, b) { return Math.abs(b.avgNextDayRecoveryDelta || 0) - Math.abs(a.avgNextDayRecoveryDelta || 0); });
+  }
+
+  function mockGetAnalytics(args) {
+    var days = (args && args.days) || 30;
+    var dateStr = state.dateList[state.selectedIndex];
+    var rec = state.byDate.recovery[dateStr] || null;
+    var slp = state.byDate.sleep[dateStr] || null;
+    var baselineDates = windowDates(Math.max(days, 14), 1);
+
+    var deviations = {
+      hrv: deviationFor(rec && rec.hrv, valuesFor(baselineDates, 'recovery', 'hrv'), 0),
+      rhr: deviationFor(rec && rec.rhr, valuesFor(baselineDates, 'recovery', 'rhr'), 0),
+      spo2: deviationFor(rec && rec.spo2, valuesFor(baselineDates, 'recovery', 'spo2'), 1),
+      skinTempC: deviationFor(rec && rec.skinTempC, valuesFor(baselineDates, 'recovery', 'skinTempC'), 1),
+      respiratoryRateBpm: deviationFor(slp && slp.respiratoryRateBpm, valuesFor(baselineDates, 'sleep', 'respiratoryRateBpm'), 1),
+    };
+
+    var trendDates = windowDates(days);
+
+    return {
+      deviations: deviations,
+      hrvBaseline: rollingBaseline(trendDates, 'recovery', 'hrv', 7),
+      rhrBaseline: rollingBaseline(trendDates, 'recovery', 'rhr', 7),
+      strainTarget: strainTargetFor(rec && rec.score),
+      acwr: mockAcwr(),
+      sleepDebt: mockSleepDebt(days),
+      anomaly: mockAnomaly(deviations),
+      compare7v7: {
+        recovery: compareField('recovery', 'score', 0),
+        hrv: compareField('recovery', 'hrv', 0),
+        rhr: compareField('recovery', 'rhr', 0),
+        sleepHours: compareField('sleep', 'durationMin', 1, function (v) { return isNum(v) ? v / 60 : null; }),
+        strain: compareField('cycle', 'strain', 1),
+      },
+      insights: mockInsights(),
+    };
+  }
+
+  function mockCoachStatus() {
+    return (state.data && state.data.coachStatus) || { available: false, source: null };
+  }
+
+  function mockAskCoach(payload) {
+    payload = payload || {};
+    var status = mockCoachStatus();
+    if (!status.available) {
+      return {
+        reply: null,
+        error: 'The coach isn’t configured in mock mode. Connect a Claude API key or CLI to chat live.',
+        source: null,
+      };
+    }
+    // (Unreachable while mock coachStatus.available stays false, kept for
+    // completeness / to mirror the real askCoach() success shape.)
+    return { reply: "Here's what I'm seeing in your recent data.", source: status.source || 'mock' };
+  }
+
+  function mockExportCsv(payload) {
+    payload = payload || {};
+    var kind = payload.kind || 'recovery';
+    var rows = 0;
+    var data = state.data || {};
+    if (kind === 'recovery') rows = (data.recovery || []).length;
+    else if (kind === 'sleep') rows = (data.sleep || []).length;
+    else if (kind === 'cycles') rows = (data.cycles || []).length;
+    else if (kind === 'workouts') rows = (data.workouts || []).length;
+    else if (kind === 'journal') rows = mockJournalEntries().length;
+    return { path: null, rows: rows, mock: true };
+  }
+
+  function mockGetSettings() {
+    var stored = lsGet(LS_SETTINGS, null);
+    if (stored) return stored;
+    var seed = (state.data && state.data.settings) ||
+      { launchAtLogin: false, notificationsEnabled: true, morningHour: 7, autoRefreshMins: 15 };
+    lsSet(LS_SETTINGS, seed);
+    return seed;
+  }
+
+  function mockSetSettings(patch) {
+    var cur = mockGetSettings();
+    var updated = Object.assign({}, cur, patch || {});
+    lsSet(LS_SETTINGS, updated);
+    return updated;
+  }
+
+  function mockOnUpdated() {
+    return function () {}; // no live push feed in mock mode
+  }
+
+  function mockOnBackfillProgress() {
+    return function () {};
+  }
+
+  // Merge a same-shape-as-dashboard payload (from getHistory) into the
+  // currently loaded data set, de-duping by date (existing/fresher records
+  // win) and re-indexing. Used to backfill wider trend ranges (90D/6M/YTD)
+  // beyond the initial dashboard window without discarding what's loaded.
+  function mergeByDate(current, incoming, allowMultiple) {
+    current = current || [];
+    incoming = incoming || [];
+    if (allowMultiple) {
+      var seen = {}, out = [];
+      current.concat(incoming).forEach(function (r) {
+        var key = r.date + '|' + (r.start || '') + '|' + (r.sport || '');
+        if (seen[key]) return;
+        seen[key] = true;
+        out.push(r);
+      });
+      return out.sort(function (a, b) { return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; });
+    }
+    var byDate = {};
+    current.forEach(function (r) { if (r.date) byDate[r.date] = r; });
+    incoming.forEach(function (r) { if (r.date && !byDate[r.date]) byDate[r.date] = r; });
+    return Object.keys(byDate).sort().reverse().map(function (d) { return byDate[d]; });
+  }
+
+  function mergeHistory(hist) {
+    var base = state.data || {};
+    var merged = Object.assign({}, base, {
+      recovery: mergeByDate(base.recovery, hist.recovery),
+      sleep: mergeByDate(base.sleep, hist.sleep),
+      cycles: mergeByDate(base.cycles, hist.cycles),
+      workouts: mergeByDate(base.workouts, hist.workouts, true),
+    });
+    state.data = merged;
+    buildIndexes(merged);
+  }
+
+  // Fetches a wider history window via getHistory({days}) if fewer than
+  // `days` are currently indexed, preserving the selected day.
+  async function ensureHistoryFor(days) {
+    if (!isNum(days) || days <= 0) return;
+    if (state.dateList.length >= days) return;
+    var res = await callApi('getHistory', [{ days: days }], mockGetHistory);
+    if (!res || res.error) return;
+    var prevSelectedDate = state.dateList[state.selectedIndex];
+    mergeHistory(res);
+    if (prevSelectedDate) {
+      var idx = state.dateList.indexOf(prevSelectedDate);
+      if (idx >= 0) state.selectedIndex = idx;
+    }
   }
 
   /* ---------------- shared card fragments ---------------- */
@@ -605,6 +1117,27 @@
 
   function chip(text, kind) {
     return '<span class="chip chip-' + kind + '">' + text + '</span>';
+  }
+
+  // Small ▲/▼ pct-vs-baseline badge used on the overview metric cards.
+  function deviationBadge(dev, higherIsBetter) {
+    if (!dev || !isNum(dev.z) || !isNum(dev.pctDelta)) return '';
+    var flat = Math.abs(dev.z) < 0.3;
+    var up = dev.pctDelta > 0;
+    var good = higherIsBetter == null ? true : (higherIsBetter ? up : !up);
+    var kind = flat ? 'neutral' : (Math.abs(dev.z) >= 2 ? (good ? 'green' : 'amber') : (good ? 'green' : 'neutral'));
+    var glyph = flat ? '&#9679;' : (up ? '&#9650;' : '&#9660;');
+    return (
+      '<span class="deviation-badge deviation-' + kind + '">' + glyph + ' ' +
+      (flat ? 'baseline' : Math.abs(dev.pctDelta).toFixed(0) + '%') + '</span>'
+    );
+  }
+
+  function acwrZoneChip(acwr) {
+    if (!acwr || acwr.insufficient || !isNum(acwr.ratio)) return chip('Building baseline', 'neutral');
+    var labels = { undertraining: 'Undertraining', optimal: 'Optimal', high: 'High load', danger: 'Danger zone' };
+    var kind = acwr.zone === 'optimal' ? 'green' : acwr.zone === 'danger' ? 'red' : 'neutral';
+    return '<span class="chip acwr-chip acwr-' + kind + '">' + (labels[acwr.zone] || acwr.zone) + '</span>';
   }
 
   /* ---------------- header + day strip ---------------- */
@@ -654,10 +1187,36 @@
     { key: 'skinTempC', label: 'Skin Temp', unit: '°C', color: C.green, decimals: 1, better: null },
   ];
 
-  function renderOverview(dateStr) {
+  function renderAnomalyBanner(dateStr, analytics) {
+    var el = document.getElementById('anomaly-banner');
+    if (!el) return;
+    var anomaly = analytics && analytics.anomaly;
+    var dismissed = lsGet(LS_DISMISSED, {});
+    if (!anomaly || !anomaly.flagged || dismissed[dateStr]) {
+      el.hidden = true;
+      el.innerHTML = '';
+      return;
+    }
+    el.hidden = false;
+    el.innerHTML =
+      '<div class="anomaly-banner-inner">' +
+      '<span class="anomaly-banner-icon" aria-hidden="true">&#9888;</span>' +
+      '<div class="anomaly-banner-body">' +
+      '<span class="anomaly-banner-title">Unusual readings today</span>' +
+      '<span class="anomaly-banner-reasons">' + anomaly.reasons.join(' &middot; ') + '</span>' +
+      '</div>' +
+      '<button type="button" class="anomaly-dismiss-btn" data-dismiss-date="' + dateStr + '">Dismiss</button>' +
+      '</div>';
+  }
+
+  async function renderOverview(dateStr) {
     var rec = state.byDate.recovery[dateStr] || null;
     var slp = state.byDate.sleep[dateStr] || null;
     var cyc = state.byDate.cycle[dateStr] || null;
+    var analyticsRes = await callApi('getAnalytics', [{ days: 30 }], mockGetAnalytics);
+    var analytics = (analyticsRes && !analyticsRes.error) ? analyticsRes : null;
+
+    renderAnomalyBanner(dateStr, analytics);
 
     /* recovery hero */
     var score = rec ? rec.score : null;
@@ -679,6 +1238,11 @@
 
     /* strain */
     var strain = cyc ? cyc.strain : null;
+    var strainTarget = analytics && analytics.strainTarget;
+    var targetChipHTML = strainTarget && isNum(strainTarget.low)
+      ? '<div class="hero-chip-row"><span class="chip strain-target-chip">Target ' + fmt(strainTarget.low, 1) +
+        '&ndash;' + fmt(strainTarget.high, 1) + '</span></div>'
+      : '';
     document.getElementById('strain-card-overview').innerHTML =
       cardHead('Day Strain', '<strong>0&ndash;21</strong> scale') +
       '<div class="hero-body">' +
@@ -689,6 +1253,7 @@
       }) +
       '<div class="hero-caption">' + fmtInt(kcalFromKj(cyc && cyc.kilojoules)) + ' cal &nbsp;&middot;&nbsp; Avg HR <strong>' +
       fmt(cyc && cyc.avgHr) + '</strong> &nbsp;&middot;&nbsp; Max HR <strong>' + fmt(cyc && cyc.maxHr) + '</strong></div>' +
+      targetChipHTML +
       '</div>';
 
     /* sleep */
@@ -714,9 +1279,11 @@
     document.getElementById('metric-cards').innerHTML = METRICS.map(function (m) {
       var vals = valuesFor(spark, 'recovery', m.key);
       var mean = avgOf(vals, m.decimals);
+      var dev = analytics && analytics.deviations && analytics.deviations[m.key];
       return (
         '<div class="metric-card">' +
-        '<div class="metric-card-head"><span class="metric-card-label">' + m.label + '</span></div>' +
+        '<div class="metric-card-head"><span class="metric-card-label">' + m.label + '</span>' +
+        deviationBadge(dev, m.better) + '</div>' +
         '<div class="metric-card-value">' + fmt(rec && rec[m.key], m.decimals) +
         '<span class="unit">' + m.unit + '</span></div>' +
         '<div class="metric-card-sub">14-day avg ' + (mean == null ? '--' : mean + (m.unit === '%' ? '%' : ' ' + m.unit)) + '</div>' +
@@ -780,11 +1347,13 @@
     { key: 'remMin', label: 'REM', color: C.stageRem },
   ];
 
-  function renderSleep(dateStr) {
+  async function renderSleep(dateStr) {
     var slp = state.byDate.sleep[dateStr] || null;
     var perf = slp ? slp.performancePct : null;
     var dur = slp ? slp.durationMin : null;
     var need = slp ? slp.needMin : null;
+    var analyticsRes = await callApi('getAnalytics', [{ days: 30 }], mockGetAnalytics);
+    var analytics = (analyticsRes && !analyticsRes.error) ? analyticsRes : null;
 
     document.getElementById('sleep-hero').innerHTML =
       cardHead('Sleep Performance', slp ? '<strong>' + fmtHM(dur) + '</strong> in bed' : '') +
@@ -896,6 +1465,38 @@
       '<span class="trend-legend-item"><span class="legend-dash" style="background:#ffffff;opacity:.6"></span>Sleep needed</span>' +
       '</div>';
 
+    /* respiratory rate */
+    var respDev = analytics && analytics.deviations && analytics.deviations.respiratoryRateBpm;
+    var respSpark = windowDates(14);
+    var respVals = valuesFor(respSpark, 'sleep', 'respiratoryRateBpm');
+    document.getElementById('sleep-respiratory-card').innerHTML =
+      cardHead('Respiratory Rate', deviationBadge(respDev, null)) +
+      '<div class="metric-card-value">' + fmt(slp && slp.respiratoryRateBpm, 1) +
+      '<span class="unit">brpm</span></div>' +
+      '<div class="metric-card-sub">' +
+      (respDev && isNum(respDev.mean) ? 'Baseline ' + fmt(respDev.mean, 1) + ' brpm' : 'Building baseline') +
+      '</div>' +
+      chartSlot(function (w) { return sparklineSVG({ width: w, height: 44, values: respVals, color: C.strain }); }, 220);
+
+    /* sleep debt */
+    var sleepDebt = (analytics && analytics.sleepDebt) || [];
+    var todayDebt = sleepDebt.length ? sleepDebt[sleepDebt.length - 1] : null;
+    var debtVals = sleepDebt.map(function (d) { return d.debtMin; });
+    var debtDates = sleepDebt.map(function (d) { return d.date; });
+    var cum7 = todayDebt ? todayDebt.cumulative7dMin : null;
+    document.getElementById('sleep-debt-card').innerHTML =
+      cardHead('Sleep Debt', isNum(cum7) ? '7-day total <strong>' + fmtHM(cum7) + '</strong>' : '') +
+      '<div class="big-figure"><span class="big-num">' + fmtHM(todayDebt && todayDebt.debtMin) +
+      '</span><span class="vs">owed last night</span></div>' +
+      (debtVals.length
+        ? chartSlot(function (w) {
+            return barChartSVG({
+              width: w, height: 150, dates: debtDates, values: debtVals, color: C.amber,
+              highlightIdx: debtDates.length - 1, fmtTick: function (t) { return fmtHM(t); },
+            });
+          }, 320)
+        : '<div class="empty-state">Not enough data yet</div>');
+
     /* sleep breakdown (days) — catalog's segmented proportional bar */
     var perfWindow = valuesFor(windowDates(30), 'sleep', 'performancePct').filter(isNum);
     var buckets = [
@@ -920,11 +1521,21 @@
 
   /* ---------------- view: strain ---------------- */
 
-  function renderStrain(dateStr) {
+  var HR_ZONES = [
+    { key: 'z1Min', label: 'Zone 1', color: '#4a90d9' },
+    { key: 'z2Min', label: 'Zone 2', color: '#3ddc84' },
+    { key: 'z3Min', label: 'Zone 3', color: '#f5c542' },
+    { key: 'z4Min', label: 'Zone 4', color: '#e8a33d' },
+    { key: 'z5Min', label: 'Zone 5', color: '#ff4d4d' },
+  ];
+
+  async function renderStrain(dateStr) {
     var cyc = state.byDate.cycle[dateStr] || null;
     var strain = cyc ? cyc.strain : null;
     var kcal = kcalFromKj(cyc && cyc.kilojoules);
     var workouts = state.workoutsByDate[dateStr] || [];
+    var analyticsRes = await callApi('getAnalytics', [{ days: 30 }], mockGetAnalytics);
+    var analytics = (analyticsRes && !analyticsRes.error) ? analyticsRes : null;
 
     document.getElementById('strain-hero').innerHTML =
       cardHead('Day Strain', '<strong>0&ndash;21</strong> scale') +
@@ -972,6 +1583,45 @@
             );
           }).join('')
         : '<div class="empty-state">No activities logged</div>');
+
+    /* ACWR (acute:chronic workload ratio) */
+    var acwr = analytics && analytics.acwr;
+    document.getElementById('strain-acwr-card').innerHTML =
+      cardHead('Training Load (ACWR)', acwrZoneChip(acwr)) +
+      (acwr && !acwr.insufficient
+        ? '<div class="big-figure"><span class="big-num">' + fmt(acwr.ratio, 2) + '</span>' +
+          '<span class="vs">acute&nbsp;:&nbsp;chronic</span></div>' +
+          '<div class="stat-list">' +
+          statRow('7-day acute', fmt(acwr.acute7, 1)) +
+          statRow('28-day chronic', fmt(acwr.chronic28, 1)) +
+          '</div>'
+        : '<div class="empty-state">Need at least 4 weeks of strain data to compute ACWR</div>');
+
+    /* HR-zone stacked bar for today's workouts */
+    var zoneTotals = HR_ZONES.map(function () { return 0; });
+    var haveZones = false;
+    workouts.forEach(function (w) {
+      if (!w.zones) return;
+      HR_ZONES.forEach(function (z, i) {
+        if (isNum(w.zones[z.key])) { zoneTotals[i] += w.zones[z.key]; haveZones = true; }
+      });
+    });
+    var zoneTotalMin = zoneTotals.reduce(function (a, b) { return a + b; }, 0);
+    document.getElementById('strain-zones-card').innerHTML =
+      cardHead('Heart Rate Zones — Today', haveZones ? fmtHM(zoneTotalMin) + ' tracked' : '') +
+      (haveZones
+        ? '<div class="stage-bar-track">' +
+          HR_ZONES.map(function (z, i) {
+            return zoneTotals[i] > 0
+              ? '<div class="stage-bar-seg" style="flex:' + zoneTotals[i] + ' 0 0%;background:' + z.color + '"></div>'
+              : '';
+          }).join('') +
+          '</div><div class="breakdown-legend">' +
+          HR_ZONES.map(function (z, i) {
+            return '<span class="breakdown-item"><span class="stage-swatch" style="background:' + z.color +
+              '"></span>' + z.label + ' <b>' + fmtHM(zoneTotals[i]) + '</b></span>';
+          }).join('') + '</div>'
+        : '<div class="empty-state">No zone data for today’s activities</div>');
 
     var dates = windowDates(14);
     var strainVals = valuesFor(dates, 'cycle', 'strain');
@@ -1116,7 +1766,58 @@
 
   /* ---------------- view: trends ---------------- */
 
-  function renderTrends(range) {
+  // trendRange is either a day-count (7/30/90/182) or the string 'ytd',
+  // which is resolved here to "days since Jan 1" of the reference date.
+  function resolveRangeDays(rangeSpec) {
+    if (rangeSpec === 'ytd') {
+      var ref = state.dateList[state.selectedIndex] || state.dateList[0];
+      if (!ref) return 30;
+      var refDate = parseLocalDate(ref);
+      var jan1 = new Date(refDate.getFullYear(), 0, 1);
+      return Math.max(1, Math.round((refDate - jan1) / 86400000) + 1);
+    }
+    var n = Number(rangeSpec);
+    return isNum(n) && n > 0 ? n : 30;
+  }
+
+  function rangeLabel(rangeSpec, days) {
+    return rangeSpec === 'ytd' ? 'year to date' : ('last ' + days + ' days');
+  }
+
+  function compareRowHTML(label, cmp, unit, decimals, better) {
+    cmp = cmp || {};
+    var av = isNum(cmp.a) ? fmt(cmp.a, decimals) : '--';
+    var bv = isNum(cmp.b) ? fmt(cmp.b, decimals) : '--';
+    return (
+      '<div class="dash-row"><span class="dash-label">' + label + '</span>' +
+      '<span class="stat-row-right"><span class="dash-value">' + av +
+      (unit ? '<span class="unit">' + unit + '</span>' : '') + trendGlyph(cmp.a, cmp.b, better) + '</span>' +
+      '<span class="stat-row-prior">was ' + bv + (unit ? ' ' + unit : '') + '</span></span></div>'
+    );
+  }
+
+  function renderCompareCard(analytics) {
+    var el = document.getElementById('trend-compare');
+    if (!el) return;
+    var cmp = analytics && analytics.compare7v7;
+    if (!cmp) {
+      el.innerHTML = cardHead('This Week vs. Last') + '<div class="empty-state">Not enough data yet</div>';
+      return;
+    }
+    el.innerHTML =
+      cardHead('This Week vs. Last', 'Trailing 7 days') +
+      '<div class="dash-list">' +
+      compareRowHTML('Recovery', cmp.recovery, '%', 0, true) +
+      compareRowHTML('HRV', cmp.hrv, 'ms', 0, true) +
+      compareRowHTML('Resting HR', cmp.rhr, 'bpm', 0, false) +
+      compareRowHTML('Sleep', cmp.sleepHours, 'hr', 1, true) +
+      compareRowHTML('Strain', cmp.strain, '', 1, null) +
+      '</div>';
+  }
+
+  async function renderTrends(rangeSpec) {
+    var range = resolveRangeDays(rangeSpec);
+    await ensureHistoryFor(range);
     var dates = windowDates(range);
     var priorDates = windowDates(range, range);
 
@@ -1240,21 +1941,356 @@
       '<span class="stat-row-prior">' + (needPrev == null ? 'no prior data' : 'was ' + fmtHM(needPrev)) + '</span></span></div>';
 
     document.getElementById('trend-dashboard').innerHTML =
-      cardHead('My Dashboard', 'Last ' + range + ' days vs. prior ' + range) +
+      cardHead('My Dashboard', 'vs. prior period, ' + rangeLabel(rangeSpec, range)) +
       '<div class="dash-list">' + listHTML + '</div>';
+
+    var analyticsRes = await callApi('getAnalytics', [{ days: Math.min(Math.max(range, 14), 90) }], mockGetAnalytics);
+    renderCompareCard((analyticsRes && !analyticsRes.error) ? analyticsRes : null);
+  }
+
+  /* ---------------- view: journal ---------------- */
+
+  function renderJournalComposer(tags) {
+    var el = document.getElementById('journal-add-card');
+    if (!el) return;
+    var today = state.dateList[0] || todayISO();
+    el.innerHTML =
+      cardHead('Add Journal Entry') +
+      '<form id="journal-form" class="journal-form">' +
+      '<div class="journal-form-row">' +
+      '<label class="micro-label" for="journal-date-input">Date</label>' +
+      '<input id="journal-date-input" type="date" class="journal-date-input" value="' + today + '" max="' + today + '" />' +
+      '</div>' +
+      '<div class="journal-form-row">' +
+      '<span class="micro-label">Tags</span>' +
+      '<div id="journal-tag-chips" class="journal-tag-chips">' +
+      tags.map(function (t) {
+        return '<button type="button" class="journal-tag-chip" data-tag="' + escapeHTML(t) + '">' + escapeHTML(t) + '</button>';
+      }).join('') +
+      '</div>' +
+      '<div class="journal-custom-tag-row">' +
+      '<input id="journal-custom-tag-input" type="text" class="journal-custom-tag-input" placeholder="Add a custom tag&hellip;" />' +
+      '<button id="journal-add-tag-btn" type="button" class="journal-add-tag-btn">Add</button>' +
+      '</div>' +
+      '</div>' +
+      '<div class="journal-form-row">' +
+      '<label class="micro-label" for="journal-note-input">Note</label>' +
+      '<textarea id="journal-note-input" class="journal-note-input" rows="3" placeholder="What happened today?"></textarea>' +
+      '</div>' +
+      '<div class="journal-form-actions">' +
+      '<button id="journal-cancel-btn" type="button" class="journal-cancel-btn">Clear</button>' +
+      '<button id="journal-save-btn" type="submit" class="journal-save-btn">Save Entry</button>' +
+      '</div>' +
+      '</form>';
+  }
+
+  function renderJournalEntries(entries) {
+    var el = document.getElementById('journal-entries-card');
+    if (!el) return;
+    el.innerHTML =
+      cardHead('Entries', entries.length + ' total') +
+      (entries.length
+        ? '<div class="journal-entry-list">' +
+          entries.map(function (e) {
+            var dt = parseLocalDate(e.date);
+            return (
+              '<div class="journal-entry-row">' +
+              '<div class="journal-entry-head">' +
+              '<span class="journal-entry-date">' +
+              dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + '</span>' +
+              '<span class="journal-entry-actions">' +
+              '<button type="button" class="journal-edit-btn" data-id="' + escapeHTML(e.id) + '" aria-label="Edit entry">&#9998;</button>' +
+              '<button type="button" class="journal-delete-btn" data-id="' + escapeHTML(e.id) + '" aria-label="Delete entry">&times;</button>' +
+              '</span>' +
+              '</div>' +
+              ((e.tags && e.tags.length)
+                ? '<div class="journal-entry-tags">' +
+                  e.tags.map(function (t) { return '<span class="journal-entry-tag">' + escapeHTML(t) + '</span>'; }).join('') +
+                  '</div>'
+                : '') +
+              (e.note ? '<p class="journal-entry-note">' + escapeHTML(e.note) + '</p>' : '') +
+              '</div>'
+            );
+          }).join('') +
+          '</div>'
+        : '<div class="empty-state">No journal entries yet</div>');
+  }
+
+  function renderJournalInsights(analytics) {
+    var el = document.getElementById('journal-insights-card');
+    if (!el) return;
+    var insights = (analytics && analytics.insights) || [];
+    var top = insights.filter(function (i) { return i.n >= 2; }).slice(0, 6);
+    el.innerHTML =
+      cardHead('Tag Insights', 'Next-day recovery impact') +
+      (top.length
+        ? '<div class="stat-list">' +
+          top.map(function (i) {
+            var color = i.direction === 'positive' ? C.green : i.direction === 'negative' ? C.red : C.label;
+            return (
+              '<div class="stat-row"><span class="stat-row-label">' + escapeHTML(i.tag) + '</span>' +
+              '<span class="stat-row-right"><span class="stat-row-value" style="color:' + color + '">' +
+              fmtSigned(i.avgNextDayRecoveryDelta, 1) + ' pts</span>' +
+              '<span class="stat-row-prior">n=' + i.n + '</span></span></div>'
+            );
+          }).join('') +
+          '</div>'
+        : '<div class="empty-state">Log a few more entries to see tag correlations</div>');
+  }
+
+  async function renderJournal() {
+    await ensureHistoryFor(60);
+    var tagsRes = await callApi('journalTags', [], mockJournalTags);
+    var tags = Array.isArray(tagsRes) ? tagsRes
+      : (tagsRes && Array.isArray(tagsRes.tags)) ? tagsRes.tags : SUGGESTED_TAGS;
+    state.journalTagsCache = tags;
+    var journalRes = await callApi('getJournal', [{ days: 0 }], mockGetJournal);
+    var entries = (journalRes && Array.isArray(journalRes.entries)) ? journalRes.entries : [];
+    state.journalEntriesCache = entries;
+    var analyticsRes = await callApi('getAnalytics', [{ days: 60 }], mockGetAnalytics);
+    var analytics = (analyticsRes && !analyticsRes.error) ? analyticsRes : null;
+
+    state.editingJournalId = null;
+    renderJournalComposer(tags);
+    renderJournalEntries(entries);
+    renderJournalInsights(analytics);
+  }
+
+  function startEditJournalEntry(entry) {
+    if (!entry) return;
+    state.editingJournalId = entry.id;
+    var dateInput = document.getElementById('journal-date-input');
+    var noteInput = document.getElementById('journal-note-input');
+    var chips = document.getElementById('journal-tag-chips');
+    if (dateInput) dateInput.value = entry.date;
+    if (noteInput) noteInput.value = entry.note || '';
+    if (chips) {
+      var entryTags = entry.tags || [];
+      var present = {};
+      chips.querySelectorAll('.journal-tag-chip').forEach(function (b) {
+        present[b.dataset.tag] = true;
+        b.classList.toggle('active', entryTags.indexOf(b.dataset.tag) !== -1);
+      });
+      entryTags.forEach(function (t) {
+        if (present[t]) return;
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'journal-tag-chip active';
+        btn.dataset.tag = t;
+        btn.textContent = t;
+        chips.appendChild(btn);
+      });
+    }
+    var saveBtn = document.getElementById('journal-save-btn');
+    if (saveBtn) saveBtn.textContent = 'Update Entry';
+    var card = document.getElementById('journal-add-card');
+    if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function addCustomJournalTag() {
+    var input = document.getElementById('journal-custom-tag-input');
+    if (!input) return;
+    var val = input.value.trim().toLowerCase().replace(/\s+/g, '-');
+    input.value = '';
+    if (!val) return;
+    var chips = document.getElementById('journal-tag-chips');
+    if (!chips) return;
+    var found = null;
+    chips.querySelectorAll('.journal-tag-chip').forEach(function (b) {
+      if (b.dataset.tag === val) found = b;
+    });
+    if (found) { found.classList.add('active'); return; }
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'journal-tag-chip active';
+    btn.dataset.tag = val;
+    btn.textContent = val;
+    chips.appendChild(btn);
+  }
+
+  async function handleJournalSave() {
+    var dateInput = document.getElementById('journal-date-input');
+    var noteInput = document.getElementById('journal-note-input');
+    var chips = document.getElementById('journal-tag-chips');
+    var tags = [];
+    if (chips) chips.querySelectorAll('.journal-tag-chip.active').forEach(function (b) { tags.push(b.dataset.tag); });
+    var payload = {
+      date: (dateInput && dateInput.value) || state.dateList[0] || todayISO(),
+      tags: tags,
+      note: (noteInput && noteInput.value) || '',
+    };
+    var saveBtn = document.getElementById('journal-save-btn');
+    if (saveBtn) saveBtn.disabled = true;
+    var editingId = state.editingJournalId;
+    var res = editingId
+      ? await callApi('updateJournalEntry', [editingId, payload], mockUpdateJournalEntry)
+      : await callApi('addJournalEntry', [payload], mockAddJournalEntry);
+    if (saveBtn) saveBtn.disabled = false;
+    if (!res || res.error) {
+      showToast('Could not save entry: ' + ((res && res.error) || 'unknown error'));
+      return;
+    }
+    showToast(editingId ? 'Journal entry updated' : 'Journal entry saved');
+    state.editingJournalId = null;
+    await renderJournal();
+  }
+
+  async function handleJournalDelete(id) {
+    if (!id) return;
+    var res = await callApi('deleteJournalEntry', [id], mockDeleteJournalEntry);
+    if (res && res.error) { showToast('Could not delete entry: ' + res.error); return; }
+    showToast('Journal entry deleted');
+    await renderJournal();
+  }
+
+  /* ---------------- view: coach ---------------- */
+
+  function renderCoachMessages() {
+    var el = document.getElementById('coach-messages');
+    if (!el) return;
+    if (!state.coachHistory.length) {
+      el.innerHTML = '<div class="empty-state">Ask about your recovery, sleep, or strain to get started.</div>';
+    } else {
+      el.innerHTML = state.coachHistory.map(function (m) {
+        var cls = m.role === 'user' ? 'coach-msg coach-msg-user' : 'coach-msg coach-msg-assistant';
+        return '<div class="' + cls + '"><p>' + escapeHTML(m.content) + '</p></div>';
+      }).join('');
+    }
+    el.scrollTop = el.scrollHeight;
+  }
+
+  async function renderCoach() {
+    var statusRes = await callApi('coachStatus', [], mockCoachStatus);
+    state.coachStatus = (statusRes && !statusRes.error) ? statusRes : { available: false, source: null };
+    var gate = document.getElementById('coach-gate-card');
+    var chat = document.getElementById('coach-chat');
+    if (!gate || !chat) return;
+    if (!state.coachStatus.available) {
+      gate.hidden = false;
+      chat.hidden = true;
+      gate.innerHTML =
+        '<span class="micro-label">Coach</span>' +
+        '<h3 class="coach-gate-title">Coach isn&rsquo;t connected yet</h3>' +
+        '<p class="coach-gate-body">Connect a Claude API key or the Claude CLI on the backend to chat about your ' +
+        'recovery, sleep, and strain trends here.</p>';
+    } else {
+      gate.hidden = true;
+      chat.hidden = false;
+      renderCoachMessages();
+    }
+  }
+
+  async function handleCoachSubmit() {
+    if (state.coachBusy) return;
+    var input = document.getElementById('coach-input');
+    var question = input && input.value.trim();
+    if (!question) return;
+    input.value = '';
+    state.coachHistory.push({ role: 'user', content: question });
+    renderCoachMessages();
+    state.coachBusy = true;
+    var thinking = document.getElementById('coach-thinking');
+    if (thinking) thinking.hidden = false;
+    var sendBtn = document.getElementById('coach-send-btn');
+    if (sendBtn) sendBtn.disabled = true;
+    var history = state.coachHistory.slice(0, -1);
+    var res = await callApi('askCoach', [{ question: question, history: history }], mockAskCoach);
+    state.coachBusy = false;
+    if (thinking) thinking.hidden = true;
+    if (sendBtn) sendBtn.disabled = false;
+    if (res && res.reply) {
+      state.coachHistory.push({ role: 'assistant', content: res.reply });
+    } else {
+      state.coachHistory.push({ role: 'assistant', content: (res && res.error) || 'Sorry, something went wrong.' });
+    }
+    renderCoachMessages();
+  }
+
+  /* ---------------- settings panel ---------------- */
+
+  async function renderSettings() {
+    var res = await callApi('getSettings', [], mockGetSettings);
+    state.settings = (res && !res.error) ? res
+      : { launchAtLogin: false, notificationsEnabled: true, morningHour: 7, autoRefreshMins: 15 };
+    var el = document.getElementById('settings-body');
+    if (!el) return;
+    var s = state.settings;
+    el.innerHTML =
+      '<div class="settings-row">' +
+      '<span class="settings-label">Launch at login</span>' +
+      '<button type="button" class="settings-toggle' + (s.launchAtLogin ? ' on' : '') +
+      '" data-key="launchAtLogin" role="switch" aria-checked="' + !!s.launchAtLogin + '"><span></span></button>' +
+      '</div>' +
+      '<div class="settings-row">' +
+      '<span class="settings-label">Notifications</span>' +
+      '<button type="button" class="settings-toggle' + (s.notificationsEnabled ? ' on' : '') +
+      '" data-key="notificationsEnabled" role="switch" aria-checked="' + !!s.notificationsEnabled + '"><span></span></button>' +
+      '</div>' +
+      '<div class="settings-row">' +
+      '<label class="settings-label" for="setting-hour">Morning sync hour</label>' +
+      '<input type="number" id="setting-hour" class="settings-number" min="0" max="23" step="1" value="' +
+      fmtInt(s.morningHour) + '" data-key="morningHour" />' +
+      '</div>' +
+      '<div class="settings-row">' +
+      '<label class="settings-label" for="setting-refresh">Auto-refresh (minutes)</label>' +
+      '<input type="number" id="setting-refresh" class="settings-number" min="5" max="120" step="5" value="' +
+      fmtInt(s.autoRefreshMins) + '" data-key="autoRefreshMins" />' +
+      '</div>';
+  }
+
+  /* ---------------- toast ---------------- */
+
+  var toastTimer = null;
+  function showToast(message) {
+    var el = document.getElementById('toast');
+    if (!el) return;
+    el.textContent = message;
+    el.hidden = false;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      el.classList.remove('show');
+      el.hidden = true;
+    }, 3000);
+  }
+
+  /* ---------------- backfill indicator ---------------- */
+
+  function applyBackfillStatus(status) {
+    state.backfillStatus = status || null;
+    var el = document.getElementById('backfill-indicator');
+    if (!el) return;
+    if (!status || status.backfillComplete) {
+      el.hidden = true;
+      el.textContent = '';
+      return;
+    }
+    el.hidden = false;
+    var counts = status.counts || {};
+    var total = Object.keys(counts).reduce(function (s, k) { return s + (isNum(counts[k]) ? counts[k] : 0); }, 0);
+    el.textContent = status.running
+      ? 'Syncing history… ' + fmtInt(total) + ' records'
+      : 'History sync paused';
+  }
+
+  async function renderBackfillIndicator() {
+    var res = await callApi('getBackfillStatus', [], mockGetBackfillStatus);
+    applyBackfillStatus((res && !res.error) ? res : null);
   }
 
   /* ---------------- view switching ---------------- */
 
-  function renderActiveView() {
+  async function renderActiveView() {
     pendingCharts = {};
     var dateStr = state.dateList[state.selectedIndex];
     var view = state.activeView;
-    if (view === 'overview') renderOverview(dateStr);
-    else if (view === 'sleep') renderSleep(dateStr);
-    else if (view === 'strain') renderStrain(dateStr);
+    if (view === 'overview') await renderOverview(dateStr);
+    else if (view === 'sleep') await renderSleep(dateStr);
+    else if (view === 'strain') await renderStrain(dateStr);
     else if (view === 'health') renderHealth(dateStr);
-    else if (view === 'trends') renderTrends(state.trendRange);
+    else if (view === 'trends') await renderTrends(state.trendRange);
+    else if (view === 'journal') await renderJournal();
+    else if (view === 'coach') await renderCoach();
 
     var root = document.getElementById('view-' + view);
     fillCharts(root);
@@ -1262,7 +2298,7 @@
     animateBarsIn(root);
   }
 
-  function setActiveView(view) {
+  async function setActiveView(view) {
     if (!view) return;
     state.activeView = view;
     document.querySelectorAll('.view').forEach(function (v) {
@@ -1272,16 +2308,16 @@
       b.classList.toggle('active', b.dataset.view === view);
     });
     document.getElementById('content').scrollTop = 0;
-    renderActiveView();
+    await renderActiveView();
   }
 
-  function selectDay(dateStr) {
+  async function selectDay(dateStr) {
     var idx = state.dateList.indexOf(dateStr);
     if (idx < 0) return;
     state.selectedIndex = idx;
     renderHeader();
     renderDayStrip();
-    renderActiveView();
+    await renderActiveView();
   }
 
   /* ---------------- reconnect state ---------------- */
@@ -1329,7 +2365,23 @@
 
     renderHeader();
     renderDayStrip();
-    renderActiveView();
+    await renderActiveView();
+    renderBackfillIndicator();
+  }
+
+  // Re-render triggered by window.whoop.onUpdated(cb) — a background
+  // refresh/backfill pushed fresh data. Unlike loadAndRender(), this must
+  // NOT reset the selected day or active view (FEATURE 9).
+  async function applyUpdate(data) {
+    if (!data || data.error) return;
+    var prevSelectedDate = state.dateList[state.selectedIndex];
+    state.data = data;
+    buildIndexes(data);
+    var idx = prevSelectedDate ? state.dateList.indexOf(prevSelectedDate) : -1;
+    state.selectedIndex = idx >= 0 ? idx : 0;
+    renderHeader();
+    renderDayStrip();
+    await renderActiveView();
   }
 
   async function handleRefresh() {
@@ -1370,21 +2422,138 @@
       if (btn) setActiveView(btn.dataset.view);
     });
 
+    var RANGE_BTN_IDS = ['range-7d', 'range-30d', 'range-90d', 'range-6m', 'range-ytd'];
     document.getElementById('trends-range-toggle').addEventListener('click', function (e) {
       var btn = e.target.closest('.segmented-btn');
       if (!btn) return;
-      state.trendRange = Number(btn.dataset.range);
-      document.getElementById('range-7d').classList.toggle('active', state.trendRange === 7);
-      document.getElementById('range-30d').classList.toggle('active', state.trendRange === 30);
+      var raw = btn.dataset.range;
+      state.trendRange = raw === 'ytd' ? 'ytd' : Number(raw);
+      RANGE_BTN_IDS.forEach(function (id) {
+        var b = document.getElementById(id);
+        if (b) b.classList.toggle('active', b === btn);
+      });
       renderActiveView();
+    });
+
+    document.getElementById('trends-export-group').addEventListener('click', async function (e) {
+      var btn = e.target.closest('.export-btn');
+      if (!btn) return;
+      btn.disabled = true;
+      var kind = btn.dataset.kind;
+      var res = await callApi('exportCsv', [{ kind: kind }], mockExportCsv);
+      btn.disabled = false;
+      if (res && res.error) {
+        showToast('Export failed: ' + res.error);
+      } else if (res) {
+        showToast(res.path
+          ? 'Exported ' + res.rows + ' rows to ' + res.path
+          : 'Exported ' + res.rows + ' rows (mock mode — no file written)');
+      }
     });
 
     document.getElementById('refresh-btn').addEventListener('click', handleRefresh);
     document.getElementById('reconnect-retry-btn').addEventListener('click', loadAndRender);
 
+    /* anomaly banner dismissal */
+    document.getElementById('view-overview').addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-dismiss-date]');
+      if (!btn) return;
+      var d = lsGet(LS_DISMISSED, {});
+      d[btn.dataset.dismissDate] = true;
+      lsSet(LS_DISMISSED, d);
+      var banner = document.getElementById('anomaly-banner');
+      if (banner) { banner.hidden = true; banner.innerHTML = ''; }
+    });
+
+    /* settings panel */
+    var settingsBtn = document.getElementById('settings-btn');
+    var settingsOverlay = document.getElementById('settings-overlay');
+    if (settingsBtn && settingsOverlay) {
+      settingsBtn.addEventListener('click', function () {
+        settingsOverlay.hidden = false;
+        renderSettings();
+      });
+      document.getElementById('settings-close-btn').addEventListener('click', function () {
+        settingsOverlay.hidden = true;
+      });
+      settingsOverlay.addEventListener('click', function (e) {
+        if (e.target === settingsOverlay) settingsOverlay.hidden = true;
+      });
+      settingsOverlay.addEventListener('click', async function (e) {
+        var toggle = e.target.closest('.settings-toggle');
+        if (!toggle) return;
+        var key = toggle.dataset.key;
+        var next = !toggle.classList.contains('on');
+        toggle.classList.toggle('on', next);
+        toggle.setAttribute('aria-checked', String(next));
+        var patch = {};
+        patch[key] = next;
+        var res = await callApi('setSettings', [patch], mockSetSettings);
+        if (res && !res.error) state.settings = res;
+      });
+      settingsOverlay.addEventListener('change', async function (e) {
+        var input = e.target.closest('.settings-number');
+        if (!input) return;
+        var key = input.dataset.key;
+        var val = Number(input.value);
+        if (!isNum(val)) return;
+        var patch = {};
+        patch[key] = val;
+        var res = await callApi('setSettings', [patch], mockSetSettings);
+        if (res && !res.error) state.settings = res;
+      });
+    }
+
+    /* journal view */
+    var viewJournal = document.getElementById('view-journal');
+    if (viewJournal) {
+      viewJournal.addEventListener('click', function (e) {
+        var tagBtn = e.target.closest('.journal-tag-chip');
+        if (tagBtn) { tagBtn.classList.toggle('active'); return; }
+        if (e.target.closest('#journal-add-tag-btn')) { addCustomJournalTag(); return; }
+        if (e.target.closest('#journal-cancel-btn')) { state.editingJournalId = null; renderJournal(); return; }
+        var editBtn = e.target.closest('.journal-edit-btn');
+        if (editBtn) {
+          var entry = (state.journalEntriesCache || []).find(function (x) { return x.id === editBtn.dataset.id; });
+          if (entry) startEditJournalEntry(entry);
+          return;
+        }
+        var delBtn = e.target.closest('.journal-delete-btn');
+        if (delBtn) { handleJournalDelete(delBtn.dataset.id); return; }
+      });
+      viewJournal.addEventListener('keydown', function (e) {
+        if (e.target && e.target.id === 'journal-custom-tag-input' && e.key === 'Enter') {
+          e.preventDefault();
+          addCustomJournalTag();
+        }
+      });
+      viewJournal.addEventListener('submit', function (e) {
+        if (!e.target.closest('#journal-form')) return;
+        e.preventDefault();
+        handleJournalSave();
+      });
+    }
+
+    /* coach view */
+    var viewCoach = document.getElementById('view-coach');
+    if (viewCoach) {
+      viewCoach.addEventListener('submit', function (e) {
+        if (!e.target.closest('#coach-input-form')) return;
+        e.preventDefault();
+        handleCoachSubmit();
+      });
+    }
+
     window.addEventListener('resize', debounce(function () {
       if (state.data) renderActiveView();
     }, 180));
+
+    if (window.whoop && typeof window.whoop.onUpdated === 'function') {
+      window.whoop.onUpdated(function (freshData) { applyUpdate(freshData); });
+    }
+    if (window.whoop && typeof window.whoop.onBackfillProgress === 'function') {
+      window.whoop.onBackfillProgress(function (status) { applyBackfillStatus(status); });
+    }
 
     loadAndRender();
   }
