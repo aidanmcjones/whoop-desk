@@ -4,3 +4,5 @@ src/last-dashboard.json
 .DS_Store
 reference/
 vendor/whoop-mcp/node_modules/
+dist-app/
+assets/icon.iconset/

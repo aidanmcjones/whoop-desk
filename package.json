@@ -1,5 +1,6 @@
 {
   "name": "whoop-desk",
+  "productName": "Whoop+",
   "version": "0.1.0",
   "private": true,
   "main": "main.js",
@@ -8,6 +9,7 @@
     "smoke": "electron . --smoke"
   },
   "devDependencies": {
+    "@electron/packager": "^20.3.0",
     "electron": "^33"
   }
 }
