@@ -1,38 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
     <clipPath id="rounded">
-      <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" />
+      <rect x="0" y="0" width="1024" height="1024" rx="230" ry="230" />
     </clipPath>
   </defs>
 
   <g clip-path="url(#rounded)">
-    <!-- Deep matte black background -->
-    <rect x="0" y="0" width="1024" height="1024" fill="#0b0e14" />
+    <!-- Near-black background -->
+    <rect x="0" y="0" width="1024" height="1024" fill="#0a0a0c" />
 
-    <!-- Bold white ring -->
-    <circle
-      cx="512"
-      cy="512"
-      r="320"
+    <!-- Thin white ring -->
+    <circle cx="512" cy="512" r="317.5" fill="none" stroke="#ffffff" stroke-width="36" />
+
+    <!-- White "W" monogram: two V shapes sharing a midpoint -->
+    <polyline
+      points="337,357 424.5,667 512,357 599.5,667 687,357"
       fill="none"
       stroke="#ffffff"
-      stroke-width="123"
-    />
-
-    <!-- Short green arc segment overlapping the ring, top-right -->
-    <circle
-      cx="512"
-      cy="512"
-      r="320"
-      fill="none"
-      stroke="#3ddc84"
-      stroke-width="123"
+      stroke-width="36"
       stroke-linecap="round"
-      stroke-dasharray="391 1620"
-      transform="rotate(-80 512 512)"
+      stroke-linejoin="round"
     />
 
-    <!-- Small green center dot -->
-    <circle cx="512" cy="512" r="62" fill="#3ddc84" />
+    <!-- Small green plus accent, top-right, outside the ring -->
+    <g stroke="#3ddc84" stroke-width="36" stroke-linecap="round">
+      <line x1="798.7" y1="163.8" x2="798.7" y2="286.8" />
+      <line x1="737.2" y1="225.3" x2="860.2" y2="225.3" />
+    </g>
   </g>
 </svg>
