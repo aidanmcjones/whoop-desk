@@ -4,6 +4,17 @@ const fs = require('fs');
 
 const isSmoke = process.argv.includes('--smoke');
 
+// Optional `--size=WIDTHxHEIGHT` override, used to spot-check the responsive
+// layout at a second window size (e.g. `npm run smoke -- --size=1024x700`).
+function windowSize() {
+  const defaults = { width: 1280, height: 820 };
+  const arg = process.argv.find((a) => a.startsWith('--size='));
+  if (!arg) return defaults;
+  const match = /^--size=(\d{3,5})x(\d{3,5})$/.exec(arg);
+  if (!match) return defaults;
+  return { width: Number(match[1]), height: Number(match[2]) };
+}
+
 app.setName('WhoopDesk');
 
 // Single-instance lock.
@@ -75,12 +86,12 @@ if (!gotLock) {
   }
 
   function createWindow() {
+    const size = windowSize();
     mainWindow = new BrowserWindow({
-      width: 400,
-      height: 820,
-      minWidth: 360,
-      minHeight: 640,
-      maxWidth: 520,
+      width: size.width,
+      height: size.height,
+      minWidth: 1024,
+      minHeight: 700,
       titleBarStyle: 'hiddenInset',
       backgroundColor: '#101318',
       show: false,
@@ -124,8 +135,23 @@ if (!gotLock) {
       app.exit(1);
     }, 20000);
 
+    // `--view=sleep|strain|health|trends` shoots a section other than the
+    // default Overview; the smoke image is always written to smoke.png.
+    const viewArg = process.argv.find((a) => a.startsWith('--view='));
+    const smokeView = viewArg ? viewArg.slice('--view='.length) : null;
+
     win.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
+        if (smokeView && /^[a-z]+$/.test(smokeView)) {
+          try {
+            await win.webContents.executeJavaScript(
+              `(() => { const b = document.getElementById('nav-${smokeView}'); if (b) b.click(); })()`
+            );
+            await new Promise((resolve) => setTimeout(resolve, 700));
+          } catch (err) {
+            consoleErrors.push(`view switch failed: ${err}`);
+          }
+        }
         try {
           const image = await win.webContents.capturePage();
           const outPath = path.join(__dirname, 'smoke.png');

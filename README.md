@@ -1,8 +1,9 @@
 # WhoopDesk
 
-A small personal Mac dock app that shows a WHOOP recovery/strain dashboard
-in a native-feeling Electron window. Built for personal use only — not
-affiliated with or endorsed by WHOOP.
+A personal desktop dashboard for a WHOOP account, in a native-feeling
+Electron window (1280x820 by default, 1024x700 minimum, resizes freely).
+Sections: Overview, Sleep, Strain, Health and Trends. Built for personal
+use only — not affiliated with or endorsed by WHOOP.
 
 ## Running
 
@@ -18,6 +19,13 @@ Renders the app off-screen, waits for it to settle, saves a screenshot to
 
 ```
 npm run smoke
+```
+
+`--size=WIDTHxHEIGHT` shoots a different window size and `--view=<section>`
+(sleep, strain, health, trends) shoots a section other than the Overview:
+
+```
+npm run smoke -- --size=1024x700 --view=trends
 ```
 
 ## Where tokens come from

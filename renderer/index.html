@@ -13,92 +13,155 @@
     <!-- Friendly reconnect state, shown when data.error is truthy -->
     <div id="reconnect-state" class="reconnect-state" hidden>
       <svg class="reconnect-glyph" width="56" height="56" viewBox="0 0 56 56" fill="none" aria-hidden="true">
-        <circle cx="28" cy="28" r="25" stroke="#262b33" stroke-width="3" />
-        <path d="M18 28a10 10 0 0 1 16.8-7.3M38 28a10 10 0 0 1-16.8 7.3" stroke="#8b93a1" stroke-width="3" stroke-linecap="round" />
-        <path d="M34.8 17.5v4.2h-4.2M21.2 38.5v-4.2h4.2" stroke="#8b93a1" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+        <circle cx="28" cy="28" r="25" stroke="#2A2E36" stroke-width="3" />
+        <path d="M18 28a10 10 0 0 1 16.8-7.3M38 28a10 10 0 0 1-16.8 7.3" stroke="#6E7480" stroke-width="3" stroke-linecap="round" />
+        <path d="M34.8 17.5v4.2h-4.2M21.2 38.5v-4.2h4.2" stroke="#6E7480" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
       <p id="reconnect-message" class="reconnect-message">We couldn't reach your Whoop data. Check your connection and try again.</p>
       <button id="reconnect-retry-btn" class="reconnect-retry-btn" type="button">Try Again</button>
     </div>
 
     <div id="main-shell">
-      <header id="top-bar">
-        <div id="greeting-block">
-          <p id="greeting" class="greeting">Good morning</p>
-          <h1 id="selected-date" class="selected-date">Today</h1>
+
+      <!-- ---------------- left sidebar ---------------- -->
+      <aside id="sidebar">
+        <div class="brand">
+          <span class="brand-dot" aria-hidden="true">
+            <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+              <circle cx="13" cy="13" r="10.5" stroke="#3DDC84" stroke-width="2" stroke-linecap="round" stroke-dasharray="49 17" transform="rotate(-90 13 13)" />
+              <circle cx="13" cy="13" r="3.4" fill="#3DDC84" />
+            </svg>
+          </span>
+          <span class="brand-text">
+            <span class="brand-name">Whoop Desk</span>
+            <span class="brand-sub">Performance Dashboard</span>
+          </span>
         </div>
-        <button id="refresh-btn" class="refresh-btn" type="button" hidden aria-label="Refresh data">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-            <path d="M16.5 10a6.5 6.5 0 1 1-1.94-4.64" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
-            <path d="M16.7 3.3v4.2h-4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-        </button>
-      </header>
 
-      <nav id="day-strip" class="day-strip" aria-label="Select a day"></nav>
+        <nav id="nav" class="nav" aria-label="Sections">
+          <button id="nav-overview" class="nav-item active" type="button" data-view="overview">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <rect x="2.5" y="2.5" width="6.4" height="6.4" rx="2" stroke="currentColor" stroke-width="1.7" />
+              <rect x="11.1" y="2.5" width="6.4" height="6.4" rx="2" stroke="currentColor" stroke-width="1.7" />
+              <rect x="2.5" y="11.1" width="6.4" height="6.4" rx="2" stroke="currentColor" stroke-width="1.7" />
+              <rect x="11.1" y="11.1" width="6.4" height="6.4" rx="2" stroke="currentColor" stroke-width="1.7" />
+            </svg>
+            <span>Overview</span>
+          </button>
+          <button id="nav-sleep" class="nav-item" type="button" data-view="sleep">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M12.2 3.1a6.6 6.6 0 1 0 4.8 11.2A7.6 7.6 0 0 1 12.2 3.1Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+            </svg>
+            <span>Sleep</span>
+          </button>
+          <button id="nav-strain" class="nav-item" type="button" data-view="strain">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M11.2 2.4 4.6 11h4.3l-.9 6.6L15.4 9h-4.3l.1-6.6Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+            </svg>
+            <span>Strain</span>
+          </button>
+          <button id="nav-health" class="nav-item" type="button" data-view="health">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M17.2 8.1c0 4-5.1 7.6-7.2 8.9-2.1-1.3-7.2-4.9-7.2-8.9A3.9 3.9 0 0 1 10 5.6a3.9 3.9 0 0 1 7.2 2.5Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+              <path d="M3.6 10.4h3l1.3-2.3 1.8 4 1.4-2.5.9 1.1h4.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>Health</span>
+          </button>
+          <button id="nav-trends" class="nav-item" type="button" data-view="trends">
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M3.2 16.4V9.6M8.4 16.4V4.2M13.6 16.4v-4.8M18.8 16.4V7.4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            </svg>
+            <span>Trends</span>
+          </button>
+        </nav>
 
-      <main id="content" class="content">
-
-        <section id="view-overview" class="view">
-          <div id="recovery-ring-wrap" class="card hero-card"></div>
-          <div id="metric-cards" class="metric-grid"></div>
-          <div id="strain-card-overview" class="card"></div>
-          <div id="sleep-summary-card" class="card"></div>
-        </section>
-
-        <section id="view-sleep" class="view" hidden>
-          <div id="sleep-ring-wrap" class="card hero-card"></div>
-          <div id="sleep-hours-card" class="card"></div>
-          <div id="sleep-stage-card" class="card"></div>
-          <div id="sleep-stats-row" class="card stats-row"></div>
-        </section>
-
-        <section id="view-strain" class="view" hidden>
-          <div id="strain-hero-wrap" class="card hero-card"></div>
-          <div id="workouts-list" class="workouts-list"></div>
-        </section>
-
-        <section id="view-trends" class="view" hidden>
-          <div id="trends-range-toggle" class="segmented">
-            <button id="range-7d" class="segmented-btn active" type="button" data-range="7">7D</button>
-            <button id="range-30d" class="segmented-btn" type="button" data-range="30">30D</button>
+        <div class="sidebar-foot">
+          <div class="unavailable-card">
+            <p class="micro-label">Not available</p>
+            <p class="unavailable-body">Coach, Journal, Community, Stress &amp; WHOOP Age have no public WHOOP API.</p>
           </div>
-          <div id="trend-recovery" class="card trend-card"></div>
-          <div id="trend-hrv" class="card trend-card"></div>
-          <div id="trend-rhr" class="card trend-card"></div>
-          <div id="trend-sleep" class="card trend-card"></div>
-          <div id="trend-strain" class="card trend-card"></div>
-        </section>
+          <button id="refresh-btn" class="refresh-btn" type="button" hidden>
+            <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M16.5 10a6.5 6.5 0 1 1-1.94-4.64" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+              <path d="M16.7 3.3v4.2h-4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+            <span>Refresh</span>
+          </button>
+          <p id="last-updated" class="last-updated"></p>
+        </div>
+      </aside>
 
-      </main>
+      <!-- ---------------- main column ---------------- -->
+      <div id="main-col">
+        <header id="top-bar">
+          <div id="greeting-block">
+            <p id="greeting" class="greeting">Good morning</p>
+            <h1 id="selected-date" class="selected-date">Today</h1>
+          </div>
+          <nav id="day-strip" class="day-strip" aria-label="Select a day"></nav>
+        </header>
 
-      <nav id="tab-bar" class="tab-bar">
-        <button id="tab-overview" class="tab-btn active" type="button" data-view="overview">
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-            <circle cx="11" cy="11" r="7.5" stroke="currentColor" stroke-width="1.7" />
-            <circle cx="11" cy="11" r="2.6" fill="currentColor" />
-          </svg>
-          <span>Overview</span>
-        </button>
-        <button id="tab-sleep" class="tab-btn" type="button" data-view="sleep">
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-            <path d="M13.2 4.2a7 7 0 1 0 5.1 11.9 8 8 0 0 1-5.1-11.9Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
-          </svg>
-          <span>Sleep</span>
-        </button>
-        <button id="tab-strain" class="tab-btn" type="button" data-view="strain">
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-            <path d="M3 13.5l3.2-6 3 4.5 2.4-8L14.5 13l2.2-3.2H19" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
-          </svg>
-          <span>Strain</span>
-        </button>
-        <button id="tab-trends" class="tab-btn" type="button" data-view="trends">
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
-            <path d="M3.5 17V9M8.5 17V5M13.5 17v-6M18.5 17V8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
-          </svg>
-          <span>Trends</span>
-        </button>
-      </nav>
+        <main id="content" class="content">
+          <div class="content-inner">
+
+            <section id="view-overview" class="view grid-12">
+              <div id="recovery-hero" class="card span-4 hero-card"></div>
+              <div id="strain-card-overview" class="card span-4 hero-card"></div>
+              <div id="sleep-summary-card" class="card span-4 hero-card"></div>
+              <div id="metric-cards" class="span-12 metric-grid"></div>
+              <div id="overview-trend" class="card span-8"></div>
+              <div id="overview-activities" class="card span-4"></div>
+            </section>
+
+            <section id="view-sleep" class="view grid-12" hidden>
+              <div id="sleep-hero" class="card span-4 hero-card"></div>
+              <div id="sleep-hours-card" class="card span-4"></div>
+              <div id="sleep-stage-card" class="card span-4"></div>
+              <div id="sleep-stats-card" class="card span-5"></div>
+              <div id="sleep-trend-card" class="card span-7"></div>
+              <div id="sleep-breakdown-card" class="card span-12"></div>
+            </section>
+
+            <section id="view-strain" class="view grid-12" hidden>
+              <div id="strain-hero" class="card span-4 hero-card"></div>
+              <div id="strain-stats-card" class="card span-4"></div>
+              <div id="workouts-card" class="card span-4"></div>
+              <div id="strain-trend-card" class="card span-8"></div>
+              <div id="calories-trend-card" class="card span-4"></div>
+            </section>
+
+            <section id="view-health" class="view grid-12" hidden>
+              <div id="health-hero" class="card span-12"></div>
+              <div id="health-tiles" class="span-12 metric-grid"></div>
+              <div id="health-table" class="card span-12"></div>
+            </section>
+
+            <section id="view-trends" class="view grid-12" hidden>
+              <div class="span-12 section-head">
+                <div>
+                  <p class="micro-label">Trend View</p>
+                  <h2 class="section-title">Rolling averages</h2>
+                </div>
+                <div id="trends-range-toggle" class="segmented">
+                  <button id="range-7d" class="segmented-btn active" type="button" data-range="7">7D</button>
+                  <button id="range-30d" class="segmented-btn" type="button" data-range="30">30D</button>
+                </div>
+              </div>
+              <div class="span-8 stack">
+                <div id="trend-recovery" class="card"></div>
+                <div id="trend-hrv" class="card"></div>
+                <div id="trend-rhr" class="card"></div>
+                <div id="trend-sleep" class="card"></div>
+                <div id="trend-strain" class="card"></div>
+              </div>
+              <div class="span-4 stack">
+                <div id="trend-dashboard" class="card"></div>
+              </div>
+            </section>
+
+          </div>
+        </main>
+      </div>
     </div>
   </div>
 
