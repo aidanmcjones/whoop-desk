@@ -32,3 +32,12 @@ populate the tokens file; WhoopDesk just reads from it.
 This is a personal project for a single user's own WHOOP account. It is not
 intended for distribution, does not use any WHOOP branding/trademarks, and
 should not be treated as an official WHOOP product.
+
+## Relationship to whoop-mcp
+
+`vendor/whoop-mcp` is a vendored copy of the MIT-licensed WHOOP MCP server
+(this user's fork of whoop-ai-mcp). Its OAuth flow is what produces
+`~/.whoop-mcp/tokens.json`; WhoopDesk itself only reads those tokens and
+never performs OAuth on its own. If the tokens are lost or expire, re-run
+the OAuth flow via the vendored server in `vendor/whoop-mcp` to regenerate
+them.

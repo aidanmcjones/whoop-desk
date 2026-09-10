@@ -1,0 +1,67 @@
+{
+  "name": "whoop-ai-mcp",
+  "version": "0.6.0",
+  "mcpName": "io.github.shashankswe2020-ux/whoop",
+  "description": "MCP server wrapping the WHOOP REST API for AI assistant access to health and fitness data",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "whoop-ai-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src/ tests/",
+    "lint:fix": "eslint src/ tests/ --fix",
+    "format": "prettier --write \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "whoop",
+    "mcp",
+    "model-context-protocol",
+    "health",
+    "fitness",
+    "recovery",
+    "sleep",
+    "ai",
+    "claude"
+  ],
+  "author": "Shashank Mishra",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shashankswe2020-ux/whoop-mcp.git"
+  },
+  "homepage": "https://github.com/shashankswe2020-ux/whoop-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/shashankswe2020-ux/whoop-mcp/issues"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.1",
+    "@typescript-eslint/eslint-plugin": "^8.32.0",
+    "@typescript-eslint/parser": "^8.32.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "eslint": "^10.2.1",
+    "prettier": "^3.5.3",
+    "tsx": "^4.19.4",
+    "typescript": "~5.8.3",
+    "vitest": "^3.1.3"
+  }
+}
