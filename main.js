@@ -15,7 +15,7 @@ function windowSize() {
   return { width: Number(match[1]), height: Number(match[2]) };
 }
 
-app.setName('WhoopDesk');
+app.setName('Whoop+');
 
 // Single-instance lock.
 const gotLock = app.requestSingleInstanceLock();
@@ -154,7 +154,11 @@ if (!gotLock) {
         }
         try {
           const image = await win.webContents.capturePage();
-          const outPath = path.join(__dirname, 'smoke.png');
+          // Use the invocation cwd, not __dirname: in a packaged app,
+          // __dirname resolves inside the (read-only, install-location)
+          // app bundle, which isn't where a caller running --smoke wants
+          // the debug screenshot to land.
+          const outPath = path.join(process.cwd(), 'smoke.png');
           fs.writeFileSync(outPath, image.toPNG());
         } catch (err) {
           consoleErrors.push(`capturePage failed: ${err}`);

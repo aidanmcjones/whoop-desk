@@ -1,27 +1,38 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
   <defs>
     <clipPath id="rounded">
-      <rect x="0" y="0" width="512" height="512" rx="112" ry="112" />
+      <rect x="0" y="0" width="1024" height="1024" rx="224" ry="224" />
     </clipPath>
   </defs>
 
   <g clip-path="url(#rounded)">
-    <rect x="0" y="0" width="512" height="512" fill="#101318" />
+    <!-- Deep matte black background -->
+    <rect x="0" y="0" width="1024" height="1024" fill="#0b0e14" />
 
-    <!-- Bold circular arc ring, gap at top-right -->
+    <!-- Bold white ring -->
     <circle
-      cx="256"
-      cy="256"
-      r="160"
+      cx="512"
+      cy="512"
+      r="320"
       fill="none"
-      stroke="#25e087"
-      stroke-width="42"
-      stroke-linecap="round"
-      stroke-dasharray="905 110"
-      transform="rotate(-45 256 256)"
+      stroke="#ffffff"
+      stroke-width="123"
     />
 
-    <!-- Small inner dot -->
-    <circle cx="256" cy="256" r="30" fill="#25e087" />
+    <!-- Short green arc segment overlapping the ring, top-right -->
+    <circle
+      cx="512"
+      cy="512"
+      r="320"
+      fill="none"
+      stroke="#3ddc84"
+      stroke-width="123"
+      stroke-linecap="round"
+      stroke-dasharray="391 1620"
+      transform="rotate(-80 512 512)"
+    />
+
+    <!-- Small green center dot -->
+    <circle cx="512" cy="512" r="62" fill="#3ddc84" />
   </g>
 </svg>

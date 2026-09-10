@@ -1,4 +1,4 @@
-# WhoopDesk
+# Whoop+
 
 A personal desktop dashboard for a WHOOP account, in a native-feeling
 Electron window (1280x820 by default, 1024x700 minimum, resizes freely).
