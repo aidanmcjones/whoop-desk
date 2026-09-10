@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'" />
+  <title>Whoop Desk</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- Friendly reconnect state, shown when data.error is truthy -->
+    <div id="reconnect-state" class="reconnect-state" hidden>
+      <svg class="reconnect-glyph" width="56" height="56" viewBox="0 0 56 56" fill="none" aria-hidden="true">
+        <circle cx="28" cy="28" r="25" stroke="#262b33" stroke-width="3" />
+        <path d="M18 28a10 10 0 0 1 16.8-7.3M38 28a10 10 0 0 1-16.8 7.3" stroke="#8b93a1" stroke-width="3" stroke-linecap="round" />
+        <path d="M34.8 17.5v4.2h-4.2M21.2 38.5v-4.2h4.2" stroke="#8b93a1" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
+      <p id="reconnect-message" class="reconnect-message">We couldn't reach your Whoop data. Check your connection and try again.</p>
+      <button id="reconnect-retry-btn" class="reconnect-retry-btn" type="button">Try Again</button>
+    </div>
+
+    <div id="main-shell">
+      <header id="top-bar">
+        <div id="greeting-block">
+          <p id="greeting" class="greeting">Good morning</p>
+          <h1 id="selected-date" class="selected-date">Today</h1>
+        </div>
+        <button id="refresh-btn" class="refresh-btn" type="button" hidden aria-label="Refresh data">
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+            <path d="M16.5 10a6.5 6.5 0 1 1-1.94-4.64" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+            <path d="M16.7 3.3v4.2h-4.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      </header>
+
+      <nav id="day-strip" class="day-strip" aria-label="Select a day"></nav>
+
+      <main id="content" class="content">
+
+        <section id="view-overview" class="view">
+          <div id="recovery-ring-wrap" class="card hero-card"></div>
+          <div id="metric-cards" class="metric-grid"></div>
+          <div id="strain-card-overview" class="card"></div>
+          <div id="sleep-summary-card" class="card"></div>
+        </section>
+
+        <section id="view-sleep" class="view" hidden>
+          <div id="sleep-ring-wrap" class="card hero-card"></div>
+          <div id="sleep-hours-card" class="card"></div>
+          <div id="sleep-stage-card" class="card"></div>
+          <div id="sleep-stats-row" class="card stats-row"></div>
+        </section>
+
+        <section id="view-strain" class="view" hidden>
+          <div id="strain-hero-wrap" class="card hero-card"></div>
+          <div id="workouts-list" class="workouts-list"></div>
+        </section>
+
+        <section id="view-trends" class="view" hidden>
+          <div id="trends-range-toggle" class="segmented">
+            <button id="range-7d" class="segmented-btn active" type="button" data-range="7">7D</button>
+            <button id="range-30d" class="segmented-btn" type="button" data-range="30">30D</button>
+          </div>
+          <div id="trend-recovery" class="card trend-card"></div>
+          <div id="trend-hrv" class="card trend-card"></div>
+          <div id="trend-rhr" class="card trend-card"></div>
+          <div id="trend-sleep" class="card trend-card"></div>
+          <div id="trend-strain" class="card trend-card"></div>
+        </section>
+
+      </main>
+
+      <nav id="tab-bar" class="tab-bar">
+        <button id="tab-overview" class="tab-btn active" type="button" data-view="overview">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+            <circle cx="11" cy="11" r="7.5" stroke="currentColor" stroke-width="1.7" />
+            <circle cx="11" cy="11" r="2.6" fill="currentColor" />
+          </svg>
+          <span>Overview</span>
+        </button>
+        <button id="tab-sleep" class="tab-btn" type="button" data-view="sleep">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+            <path d="M13.2 4.2a7 7 0 1 0 5.1 11.9 8 8 0 0 1-5.1-11.9Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" />
+          </svg>
+          <span>Sleep</span>
+        </button>
+        <button id="tab-strain" class="tab-btn" type="button" data-view="strain">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+            <path d="M3 13.5l3.2-6 3 4.5 2.4-8L14.5 13l2.2-3.2H19" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <span>Strain</span>
+        </button>
+        <button id="tab-trends" class="tab-btn" type="button" data-view="trends">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none" aria-hidden="true">
+            <path d="M3.5 17V9M8.5 17V5M13.5 17v-6M18.5 17V8" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" />
+          </svg>
+          <span>Trends</span>
+        </button>
+      </nav>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>

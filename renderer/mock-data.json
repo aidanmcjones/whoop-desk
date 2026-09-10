@@ -1,0 +1,1269 @@
+{
+  "generatedAt": "2026-09-10T12:32:00.000Z",
+  "profile": {
+    "firstName": "Demo",
+    "lastName": "User"
+  },
+  "recovery": [
+    {
+      "date": "2026-09-10",
+      "score": 49,
+      "rhr": 55,
+      "hrv": 63,
+      "spo2": 96,
+      "skinTempC": 34.2,
+      "calibrating": false
+    },
+    {
+      "date": "2026-09-09",
+      "score": 51,
+      "rhr": 56,
+      "hrv": 59,
+      "spo2": 98.2,
+      "skinTempC": 33.9,
+      "calibrating": false
+    },
+    {
+      "date": "2026-09-08",
+      "score": 57,
+      "rhr": 56,
+      "hrv": 52,
+      "spo2": 94.7,
+      "skinTempC": 33.5,
+      "calibrating": false
+    },
+    {
+      "date": "2026-09-07",
+      "score": 48,
+      "rhr": 57,
+      "hrv": 55,
+      "spo2": 98.1,
+      "skinTempC": 34.2,
+      "calibrating": false
+    },
+    {
+      "date": "2026-09-06",
+      "score": 44,
+      "rhr": 58,
+      "hrv": 59,
+      "spo2": 97,
+      "skinTempC": 33.5,
+      "calibrating": false
+    },
+    {
+      "date": "2026-09-05",
+      "score": 46,
+      "rhr": 58,
+      "hrv": 60,
+      "spo2": 95.8,
+      "skinTempC": 32.8,
+      "calibrating": false
+    },
+    {
+      "date": "2026-09-04",
+      "score": 48,
+      "rhr": 57,
+      "hrv": 51,
+      "spo2": null,
+      "skinTempC": 33.2,
+      "calibrating": false
+    },
+    {
+      "date": "2026-09-03",
+      "score": 50,
+      "rhr": 58,
+      "hrv": 64,
+      "spo2": 95.3,
+      "skinTempC": 34.1,
+      "calibrating": false
+    },
+    {
+      "date": "2026-09-02",
+      "score": 49,
+      "rhr": 56,
+      "hrv": 54,
+      "spo2": 96.6,
+      "skinTempC": 33.2,
+      "calibrating": false
+    },
+    {
+      "date": "2026-09-01",
+      "score": 62,
+      "rhr": 56,
+      "hrv": 60,
+      "spo2": 97,
+      "skinTempC": 33.1,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-31",
+      "score": 61,
+      "rhr": 57,
+      "hrv": 67,
+      "spo2": 97.3,
+      "skinTempC": 33.7,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-30",
+      "score": 75,
+      "rhr": 55,
+      "hrv": 65,
+      "spo2": 98.1,
+      "skinTempC": 33.6,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-29",
+      "score": 79,
+      "rhr": 58,
+      "hrv": 60,
+      "spo2": 96.2,
+      "skinTempC": 33.7,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-28",
+      "score": 69,
+      "rhr": 55,
+      "hrv": 56,
+      "spo2": 96.6,
+      "skinTempC": 34,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-27",
+      "score": 72,
+      "rhr": 58,
+      "hrv": 56,
+      "spo2": 95.2,
+      "skinTempC": 33.3,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-26",
+      "score": 65,
+      "rhr": 55,
+      "hrv": 62,
+      "spo2": 95.6,
+      "skinTempC": 34.2,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-25",
+      "score": 63,
+      "rhr": 55,
+      "hrv": 66,
+      "spo2": null,
+      "skinTempC": 32.8,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-24",
+      "score": 67,
+      "rhr": 54,
+      "hrv": 60,
+      "spo2": 96,
+      "skinTempC": 33.7,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-23",
+      "score": 60,
+      "rhr": 54,
+      "hrv": 71,
+      "spo2": 95.4,
+      "skinTempC": 33.3,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-22",
+      "score": 65,
+      "rhr": 56,
+      "hrv": 74,
+      "spo2": 96.1,
+      "skinTempC": 33,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-21",
+      "score": 55,
+      "rhr": 54,
+      "hrv": 73,
+      "spo2": 97.4,
+      "skinTempC": 34.1,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-20",
+      "score": 59,
+      "rhr": 56,
+      "hrv": 72,
+      "spo2": 95.9,
+      "skinTempC": 34,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-19",
+      "score": 69,
+      "rhr": 54,
+      "hrv": 72,
+      "spo2": 95.5,
+      "skinTempC": 33.9,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-18",
+      "score": 72,
+      "rhr": 55,
+      "hrv": 72,
+      "spo2": 96.2,
+      "skinTempC": 32.9,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-17",
+      "score": 66,
+      "rhr": 51,
+      "hrv": 69,
+      "spo2": 95.6,
+      "skinTempC": 32.9,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-16",
+      "score": 68,
+      "rhr": 54,
+      "hrv": 70,
+      "spo2": 95.8,
+      "skinTempC": 33,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-15",
+      "score": 61,
+      "rhr": 54,
+      "hrv": 70,
+      "spo2": 97.2,
+      "skinTempC": 32.9,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-14",
+      "score": 57,
+      "rhr": 55,
+      "hrv": 74,
+      "spo2": 96.5,
+      "skinTempC": 33.5,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-13",
+      "score": 50,
+      "rhr": 53,
+      "hrv": 71,
+      "spo2": 95.1,
+      "skinTempC": 33,
+      "calibrating": false
+    },
+    {
+      "date": "2026-08-12",
+      "score": 57,
+      "rhr": 53,
+      "hrv": 73,
+      "spo2": 95.5,
+      "skinTempC": 33.2,
+      "calibrating": false
+    }
+  ],
+  "sleep": [
+    {
+      "date": "2026-09-10",
+      "performancePct": 100,
+      "durationMin": 498,
+      "needMin": 464,
+      "efficiencyPct": 96,
+      "consistencyPct": 96,
+      "stages": {
+        "deepMin": 61,
+        "remMin": 83,
+        "lightMin": 325,
+        "awakeMin": 29
+      },
+      "start": "2026-09-10T04:39:00.000Z",
+      "end": "2026-09-10T12:57:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-09-09",
+      "performancePct": 75,
+      "durationMin": 333,
+      "needMin": 445,
+      "efficiencyPct": 91,
+      "consistencyPct": 53,
+      "stages": {
+        "deepMin": 57,
+        "remMin": 55,
+        "lightMin": 211,
+        "awakeMin": 10
+      },
+      "start": "2026-09-09T07:40:00.000Z",
+      "end": "2026-09-09T13:13:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-09-08",
+      "performancePct": 100,
+      "durationMin": 488,
+      "needMin": 458,
+      "efficiencyPct": 81,
+      "consistencyPct": 59,
+      "stages": {
+        "deepMin": 77,
+        "remMin": 93,
+        "lightMin": 308,
+        "awakeMin": 10
+      },
+      "start": "2026-09-08T03:37:00.000Z",
+      "end": "2026-09-08T11:45:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-09-07",
+      "performancePct": 96,
+      "durationMin": 425,
+      "needMin": 443,
+      "efficiencyPct": 80,
+      "consistencyPct": 59,
+      "stages": {
+        "deepMin": 68,
+        "remMin": 80,
+        "lightMin": 248,
+        "awakeMin": 29
+      },
+      "start": "2026-09-07T06:29:00.000Z",
+      "end": "2026-09-07T13:34:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-09-06",
+      "performancePct": 85,
+      "durationMin": 368,
+      "needMin": 433,
+      "efficiencyPct": 89,
+      "consistencyPct": 39,
+      "stages": {
+        "deepMin": 68,
+        "remMin": 79,
+        "lightMin": 201,
+        "awakeMin": 20
+      },
+      "start": "2026-09-06T08:11:00.000Z",
+      "end": "2026-09-06T14:19:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-09-05",
+      "performancePct": null,
+      "durationMin": null,
+      "needMin": 417,
+      "efficiencyPct": 90,
+      "consistencyPct": 90,
+      "stages": {
+        "deepMin": null,
+        "remMin": null,
+        "lightMin": null,
+        "awakeMin": null
+      },
+      "start": null,
+      "end": null,
+      "naps": 0
+    },
+    {
+      "date": "2026-09-04",
+      "performancePct": 83,
+      "durationMin": 394,
+      "needMin": 477,
+      "efficiencyPct": 82,
+      "consistencyPct": 66,
+      "stages": {
+        "deepMin": 78,
+        "remMin": 87,
+        "lightMin": 210,
+        "awakeMin": 19
+      },
+      "start": "2026-09-04T06:32:00.000Z",
+      "end": "2026-09-04T13:06:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-09-03",
+      "performancePct": 96,
+      "durationMin": 453,
+      "needMin": 471,
+      "efficiencyPct": 92,
+      "consistencyPct": 36,
+      "stages": {
+        "deepMin": 71,
+        "remMin": 112,
+        "lightMin": 252,
+        "awakeMin": 18
+      },
+      "start": "2026-09-03T05:16:00.000Z",
+      "end": "2026-09-03T12:49:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-09-02",
+      "performancePct": 100,
+      "durationMin": 460,
+      "needMin": 459,
+      "efficiencyPct": 94,
+      "consistencyPct": 35,
+      "stages": {
+        "deepMin": 67,
+        "remMin": 116,
+        "lightMin": 248,
+        "awakeMin": 29
+      },
+      "start": "2026-09-02T04:53:00.000Z",
+      "end": "2026-09-02T12:33:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-09-01",
+      "performancePct": 76,
+      "durationMin": 355,
+      "needMin": 465,
+      "efficiencyPct": 92,
+      "consistencyPct": 83,
+      "stages": {
+        "deepMin": 59,
+        "remMin": 76,
+        "lightMin": 212,
+        "awakeMin": 8
+      },
+      "start": "2026-09-01T07:12:00.000Z",
+      "end": "2026-09-01T13:07:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-31",
+      "performancePct": 100,
+      "durationMin": 463,
+      "needMin": 431,
+      "efficiencyPct": 79,
+      "consistencyPct": 54,
+      "stages": {
+        "deepMin": 96,
+        "remMin": 75,
+        "lightMin": 266,
+        "awakeMin": 26
+      },
+      "start": "2026-08-31T04:22:00.000Z",
+      "end": "2026-08-31T12:05:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-30",
+      "performancePct": 85,
+      "durationMin": 359,
+      "needMin": 421,
+      "efficiencyPct": 85,
+      "consistencyPct": 72,
+      "stages": {
+        "deepMin": 55,
+        "remMin": 81,
+        "lightMin": 199,
+        "awakeMin": 24
+      },
+      "start": "2026-08-30T05:37:00.000Z",
+      "end": "2026-08-30T11:36:00.000Z",
+      "naps": 1
+    },
+    {
+      "date": "2026-08-29",
+      "performancePct": 84,
+      "durationMin": 352,
+      "needMin": 417,
+      "efficiencyPct": 85,
+      "consistencyPct": 94,
+      "stages": {
+        "deepMin": 59,
+        "remMin": 71,
+        "lightMin": 196,
+        "awakeMin": 26
+      },
+      "start": "2026-08-29T08:49:00.000Z",
+      "end": "2026-08-29T14:41:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-28",
+      "performancePct": 80,
+      "durationMin": 365,
+      "needMin": 458,
+      "efficiencyPct": 92,
+      "consistencyPct": 71,
+      "stages": {
+        "deepMin": 47,
+        "remMin": 95,
+        "lightMin": 208,
+        "awakeMin": 15
+      },
+      "start": "2026-08-28T07:59:00.000Z",
+      "end": "2026-08-28T14:04:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-27",
+      "performancePct": 77,
+      "durationMin": 361,
+      "needMin": 470,
+      "efficiencyPct": 93,
+      "consistencyPct": 86,
+      "stages": {
+        "deepMin": 62,
+        "remMin": 76,
+        "lightMin": 201,
+        "awakeMin": 22
+      },
+      "start": "2026-08-27T05:53:00.000Z",
+      "end": "2026-08-27T11:54:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-26",
+      "performancePct": 76,
+      "durationMin": 360,
+      "needMin": 471,
+      "efficiencyPct": 85,
+      "consistencyPct": 90,
+      "stages": {
+        "deepMin": 44,
+        "remMin": 59,
+        "lightMin": 244,
+        "awakeMin": 13
+      },
+      "start": "2026-08-26T05:49:00.000Z",
+      "end": "2026-08-26T11:49:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-25",
+      "performancePct": 100,
+      "durationMin": 482,
+      "needMin": 471,
+      "efficiencyPct": 82,
+      "consistencyPct": 37,
+      "stages": {
+        "deepMin": 62,
+        "remMin": 94,
+        "lightMin": 290,
+        "awakeMin": 36
+      },
+      "start": "2026-08-25T05:14:00.000Z",
+      "end": "2026-08-25T13:16:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-24",
+      "performancePct": 78,
+      "durationMin": 331,
+      "needMin": 422,
+      "efficiencyPct": 97,
+      "consistencyPct": 41,
+      "stages": {
+        "deepMin": 67,
+        "remMin": 55,
+        "lightMin": 192,
+        "awakeMin": 17
+      },
+      "start": "2026-08-24T08:23:00.000Z",
+      "end": "2026-08-24T13:54:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-23",
+      "performancePct": 99,
+      "durationMin": 445,
+      "needMin": 448,
+      "efficiencyPct": 83,
+      "consistencyPct": 53,
+      "stages": {
+        "deepMin": 73,
+        "remMin": 95,
+        "lightMin": 248,
+        "awakeMin": 29
+      },
+      "start": "2026-08-23T06:18:00.000Z",
+      "end": "2026-08-23T13:43:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-22",
+      "performancePct": 100,
+      "durationMin": 487,
+      "needMin": 476,
+      "efficiencyPct": 90,
+      "consistencyPct": 43,
+      "stages": {
+        "deepMin": 72,
+        "remMin": 97,
+        "lightMin": 284,
+        "awakeMin": 34
+      },
+      "start": "2026-08-22T04:44:00.000Z",
+      "end": "2026-08-22T12:51:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-21",
+      "performancePct": 88,
+      "durationMin": 406,
+      "needMin": 464,
+      "efficiencyPct": 80,
+      "consistencyPct": 92,
+      "stages": {
+        "deepMin": 78,
+        "remMin": 79,
+        "lightMin": 234,
+        "awakeMin": 15
+      },
+      "start": "2026-08-21T03:41:00.000Z",
+      "end": "2026-08-21T10:27:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-20",
+      "performancePct": 89,
+      "durationMin": 406,
+      "needMin": 457,
+      "efficiencyPct": 84,
+      "consistencyPct": 46,
+      "stages": {
+        "deepMin": 62,
+        "remMin": 85,
+        "lightMin": 229,
+        "awakeMin": 30
+      },
+      "start": "2026-08-20T07:25:00.000Z",
+      "end": "2026-08-20T14:11:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-19",
+      "performancePct": 85,
+      "durationMin": 355,
+      "needMin": 417,
+      "efficiencyPct": 85,
+      "consistencyPct": 56,
+      "stages": {
+        "deepMin": 63,
+        "remMin": 59,
+        "lightMin": 215,
+        "awakeMin": 18
+      },
+      "start": "2026-08-19T06:26:00.000Z",
+      "end": "2026-08-19T12:21:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-18",
+      "performancePct": 72,
+      "durationMin": 336,
+      "needMin": 464,
+      "efficiencyPct": 86,
+      "consistencyPct": 67,
+      "stages": {
+        "deepMin": 65,
+        "remMin": 58,
+        "lightMin": 189,
+        "awakeMin": 24
+      },
+      "start": "2026-08-18T07:14:00.000Z",
+      "end": "2026-08-18T12:50:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-17",
+      "performancePct": 78,
+      "durationMin": 350,
+      "needMin": 446,
+      "efficiencyPct": 85,
+      "consistencyPct": 60,
+      "stages": {
+        "deepMin": 57,
+        "remMin": 83,
+        "lightMin": 203,
+        "awakeMin": 7
+      },
+      "start": "2026-08-17T04:19:00.000Z",
+      "end": "2026-08-17T10:09:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-16",
+      "performancePct": 72,
+      "durationMin": 336,
+      "needMin": 464,
+      "efficiencyPct": 92,
+      "consistencyPct": 42,
+      "stages": {
+        "deepMin": 44,
+        "remMin": 72,
+        "lightMin": 203,
+        "awakeMin": 17
+      },
+      "start": "2026-08-16T05:30:00.000Z",
+      "end": "2026-08-16T11:06:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-15",
+      "performancePct": 100,
+      "durationMin": 475,
+      "needMin": 443,
+      "efficiencyPct": 93,
+      "consistencyPct": 81,
+      "stages": {
+        "deepMin": 67,
+        "remMin": 81,
+        "lightMin": 306,
+        "awakeMin": 21
+      },
+      "start": "2026-08-15T06:55:00.000Z",
+      "end": "2026-08-15T14:50:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-14",
+      "performancePct": 87,
+      "durationMin": 412,
+      "needMin": 471,
+      "efficiencyPct": 88,
+      "consistencyPct": 56,
+      "stages": {
+        "deepMin": 73,
+        "remMin": 107,
+        "lightMin": 202,
+        "awakeMin": 30
+      },
+      "start": "2026-08-14T05:29:00.000Z",
+      "end": "2026-08-14T12:21:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-13",
+      "performancePct": 83,
+      "durationMin": 349,
+      "needMin": 419,
+      "efficiencyPct": 79,
+      "consistencyPct": 36,
+      "stages": {
+        "deepMin": 76,
+        "remMin": 78,
+        "lightMin": 182,
+        "awakeMin": 13
+      },
+      "start": "2026-08-13T04:46:00.000Z",
+      "end": "2026-08-13T10:35:00.000Z",
+      "naps": 0
+    },
+    {
+      "date": "2026-08-12",
+      "performancePct": 100,
+      "durationMin": 427,
+      "needMin": 428,
+      "efficiencyPct": 80,
+      "consistencyPct": 45,
+      "stages": {
+        "deepMin": 77,
+        "remMin": 86,
+        "lightMin": 244,
+        "awakeMin": 20
+      },
+      "start": "2026-08-12T03:23:00.000Z",
+      "end": "2026-08-12T10:30:00.000Z",
+      "naps": 0
+    }
+  ],
+  "cycles": [
+    {
+      "date": "2026-09-10",
+      "strain": 15.6,
+      "kilojoules": 7360,
+      "avgHr": 64,
+      "maxHr": 114
+    },
+    {
+      "date": "2026-09-09",
+      "strain": 5.1,
+      "kilojoules": 2793,
+      "avgHr": 90,
+      "maxHr": 112
+    },
+    {
+      "date": "2026-09-08",
+      "strain": 17.2,
+      "kilojoules": 7922,
+      "avgHr": 85,
+      "maxHr": 109
+    },
+    {
+      "date": "2026-09-07",
+      "strain": 16.1,
+      "kilojoules": 8272,
+      "avgHr": 89,
+      "maxHr": 150
+    },
+    {
+      "date": "2026-09-06",
+      "strain": 6.8,
+      "kilojoules": 3990,
+      "avgHr": 80,
+      "maxHr": 131
+    },
+    {
+      "date": "2026-09-05",
+      "strain": 10.9,
+      "kilojoules": 4783,
+      "avgHr": 92,
+      "maxHr": 112
+    },
+    {
+      "date": "2026-09-04",
+      "strain": 10.4,
+      "kilojoules": 5623,
+      "avgHr": 69,
+      "maxHr": 91
+    },
+    {
+      "date": "2026-09-03",
+      "strain": 8.4,
+      "kilojoules": 4229,
+      "avgHr": 95,
+      "maxHr": 144
+    },
+    {
+      "date": "2026-09-02",
+      "strain": 12,
+      "kilojoules": 6560,
+      "avgHr": 92,
+      "maxHr": 123
+    },
+    {
+      "date": "2026-09-01",
+      "strain": 12.5,
+      "kilojoules": 6618,
+      "avgHr": 82,
+      "maxHr": 147
+    },
+    {
+      "date": "2026-08-31",
+      "strain": 14.4,
+      "kilojoules": 6695,
+      "avgHr": 80,
+      "maxHr": 135
+    },
+    {
+      "date": "2026-08-30",
+      "strain": 8.6,
+      "kilojoules": 4315,
+      "avgHr": 78,
+      "maxHr": 106
+    },
+    {
+      "date": "2026-08-29",
+      "strain": null,
+      "kilojoules": null,
+      "avgHr": null,
+      "maxHr": null
+    },
+    {
+      "date": "2026-08-28",
+      "strain": 9.7,
+      "kilojoules": 5248,
+      "avgHr": 76,
+      "maxHr": 125
+    },
+    {
+      "date": "2026-08-27",
+      "strain": 8.4,
+      "kilojoules": 5042,
+      "avgHr": 87,
+      "maxHr": 148
+    },
+    {
+      "date": "2026-08-26",
+      "strain": 10.9,
+      "kilojoules": 6460,
+      "avgHr": 77,
+      "maxHr": 97
+    },
+    {
+      "date": "2026-08-25",
+      "strain": 3.7,
+      "kilojoules": 2200,
+      "avgHr": 93,
+      "maxHr": 154
+    },
+    {
+      "date": "2026-08-24",
+      "strain": 9.3,
+      "kilojoules": 5426,
+      "avgHr": 60,
+      "maxHr": 125
+    },
+    {
+      "date": "2026-08-23",
+      "strain": 4.7,
+      "kilojoules": 2879,
+      "avgHr": 69,
+      "maxHr": 119
+    },
+    {
+      "date": "2026-08-22",
+      "strain": 18.1,
+      "kilojoules": 10589,
+      "avgHr": 62,
+      "maxHr": 102
+    },
+    {
+      "date": "2026-08-21",
+      "strain": 13.3,
+      "kilojoules": 6804,
+      "avgHr": 69,
+      "maxHr": 114
+    },
+    {
+      "date": "2026-08-20",
+      "strain": 20,
+      "kilojoules": 8723,
+      "avgHr": 71,
+      "maxHr": 136
+    },
+    {
+      "date": "2026-08-19",
+      "strain": 7.6,
+      "kilojoules": 4672,
+      "avgHr": 79,
+      "maxHr": 145
+    },
+    {
+      "date": "2026-08-18",
+      "strain": 9.2,
+      "kilojoules": 5417,
+      "avgHr": 61,
+      "maxHr": 111
+    },
+    {
+      "date": "2026-08-17",
+      "strain": 5.1,
+      "kilojoules": 2355,
+      "avgHr": 77,
+      "maxHr": 137
+    },
+    {
+      "date": "2026-08-16",
+      "strain": 4.8,
+      "kilojoules": 2441,
+      "avgHr": 78,
+      "maxHr": 129
+    },
+    {
+      "date": "2026-08-15",
+      "strain": 16.2,
+      "kilojoules": 7060,
+      "avgHr": 66,
+      "maxHr": 111
+    },
+    {
+      "date": "2026-08-14",
+      "strain": 5.3,
+      "kilojoules": 2743,
+      "avgHr": 86,
+      "maxHr": 110
+    },
+    {
+      "date": "2026-08-13",
+      "strain": 18.6,
+      "kilojoules": 9250,
+      "avgHr": 95,
+      "maxHr": 143
+    },
+    {
+      "date": "2026-08-12",
+      "strain": 4.4,
+      "kilojoules": 2200,
+      "avgHr": 75,
+      "maxHr": 133
+    }
+  ],
+  "workouts": [
+    {
+      "date": "2026-09-08",
+      "sport": "Swimming",
+      "emoji": "🏊",
+      "start": "2026-09-08T19:02:00.000Z",
+      "durationMin": 33,
+      "strain": 9.4,
+      "avgHr": 131,
+      "maxHr": 145,
+      "kilojoules": 405
+    },
+    {
+      "date": "2026-09-07",
+      "sport": "Yoga",
+      "emoji": "🧘",
+      "start": "2026-09-07T13:19:00.000Z",
+      "durationMin": 48,
+      "strain": 4.1,
+      "avgHr": 79,
+      "maxHr": 107,
+      "kilojoules": 929
+    },
+    {
+      "date": "2026-09-05",
+      "sport": "Weightlifting",
+      "emoji": "🏋️",
+      "start": "2026-09-06T00:40:00.000Z",
+      "durationMin": 42,
+      "strain": 15.6,
+      "avgHr": 104,
+      "maxHr": 131,
+      "kilojoules": 781
+    },
+    {
+      "date": "2026-09-04",
+      "sport": "Running",
+      "emoji": "🏃",
+      "start": "2026-09-04T16:38:00.000Z",
+      "durationMin": 68,
+      "strain": 5.4,
+      "avgHr": 145,
+      "maxHr": 168,
+      "kilojoules": 1172
+    },
+    {
+      "date": "2026-09-03",
+      "sport": "Weightlifting",
+      "emoji": "🏋️",
+      "start": "2026-09-03T15:14:00.000Z",
+      "durationMin": 29,
+      "strain": 7.4,
+      "avgHr": 114,
+      "maxHr": 130,
+      "kilojoules": 289
+    },
+    {
+      "date": "2026-09-02",
+      "sport": "Cycling",
+      "emoji": "🚴",
+      "start": "2026-09-02T17:21:00.000Z",
+      "durationMin": 57,
+      "strain": 12.4,
+      "avgHr": 140,
+      "maxHr": 167,
+      "kilojoules": 931
+    },
+    {
+      "date": "2026-08-31",
+      "sport": "Weightlifting",
+      "emoji": "🏋️",
+      "start": "2026-08-31T15:42:00.000Z",
+      "durationMin": 56,
+      "strain": 4.2,
+      "avgHr": 117,
+      "maxHr": 135,
+      "kilojoules": 705
+    },
+    {
+      "date": "2026-08-30",
+      "sport": "HIIT",
+      "emoji": "🔥",
+      "start": "2026-08-30T13:20:00.000Z",
+      "durationMin": 51,
+      "strain": 16.2,
+      "avgHr": 147,
+      "maxHr": 173,
+      "kilojoules": 1035
+    },
+    {
+      "date": "2026-08-30",
+      "sport": "Walking",
+      "emoji": "🚶",
+      "start": "2026-08-30T16:26:00.000Z",
+      "durationMin": 19,
+      "strain": 17.8,
+      "avgHr": 109,
+      "maxHr": 125,
+      "kilojoules": 311
+    },
+    {
+      "date": "2026-08-28",
+      "sport": "HIIT",
+      "emoji": "🔥",
+      "start": "2026-08-28T16:50:00.000Z",
+      "durationMin": 65,
+      "strain": 7.8,
+      "avgHr": 166,
+      "maxHr": 187,
+      "kilojoules": 1126
+    },
+    {
+      "date": "2026-08-27",
+      "sport": "Running",
+      "emoji": "🏃",
+      "start": "2026-08-28T00:14:00.000Z",
+      "durationMin": 65,
+      "strain": 7.2,
+      "avgHr": 142,
+      "maxHr": 154,
+      "kilojoules": 1311
+    },
+    {
+      "date": "2026-08-27",
+      "sport": "Cycling",
+      "emoji": "🚴",
+      "start": "2026-08-27T20:44:00.000Z",
+      "durationMin": 49,
+      "strain": 15.7,
+      "avgHr": 153,
+      "maxHr": 168,
+      "kilojoules": 930
+    },
+    {
+      "date": "2026-08-26",
+      "sport": "Swimming",
+      "emoji": "🏊",
+      "start": "2026-08-26T16:21:00.000Z",
+      "durationMin": 93,
+      "strain": 12.2,
+      "avgHr": 150,
+      "maxHr": 167,
+      "kilojoules": 1605
+    },
+    {
+      "date": "2026-08-26",
+      "sport": "Walking",
+      "emoji": "🚶",
+      "start": "2026-08-26T12:36:00.000Z",
+      "durationMin": 23,
+      "strain": 12.7,
+      "avgHr": 108,
+      "maxHr": 132,
+      "kilojoules": 423
+    },
+    {
+      "date": "2026-08-25",
+      "sport": "HIIT",
+      "emoji": "🔥",
+      "start": "2026-08-25T18:53:00.000Z",
+      "durationMin": 58,
+      "strain": 6.4,
+      "avgHr": 145,
+      "maxHr": 170,
+      "kilojoules": 1164
+    },
+    {
+      "date": "2026-08-24",
+      "sport": "Swimming",
+      "emoji": "🏊",
+      "start": "2026-08-24T13:55:00.000Z",
+      "durationMin": 47,
+      "strain": 16.5,
+      "avgHr": 130,
+      "maxHr": 154,
+      "kilojoules": 883
+    },
+    {
+      "date": "2026-08-22",
+      "sport": "Swimming",
+      "emoji": "🏊",
+      "start": "2026-08-22T18:07:00.000Z",
+      "durationMin": 72,
+      "strain": 4.7,
+      "avgHr": 130,
+      "maxHr": 152,
+      "kilojoules": 829
+    },
+    {
+      "date": "2026-08-21",
+      "sport": "Yoga",
+      "emoji": "🧘",
+      "start": "2026-08-21T18:45:00.000Z",
+      "durationMin": 62,
+      "strain": 15.3,
+      "avgHr": 75,
+      "maxHr": 87,
+      "kilojoules": 709
+    },
+    {
+      "date": "2026-08-20",
+      "sport": "Walking",
+      "emoji": "🚶",
+      "start": "2026-08-20T16:32:00.000Z",
+      "durationMin": 40,
+      "strain": 14.5,
+      "avgHr": 97,
+      "maxHr": 113,
+      "kilojoules": 573
+    },
+    {
+      "date": "2026-08-16",
+      "sport": "Running",
+      "emoji": "🏃",
+      "start": "2026-08-16T11:25:00.000Z",
+      "durationMin": 75,
+      "strain": 13.6,
+      "avgHr": 171,
+      "maxHr": 188,
+      "kilojoules": 897
+    },
+    {
+      "date": "2026-08-15",
+      "sport": "Weightlifting",
+      "emoji": "🏋️",
+      "start": "2026-08-15T18:09:00.000Z",
+      "durationMin": 72,
+      "strain": 8,
+      "avgHr": 115,
+      "maxHr": 130,
+      "kilojoules": 1250
+    },
+    {
+      "date": "2026-08-14",
+      "sport": "Running",
+      "emoji": "🏃",
+      "start": "2026-08-14T14:16:00.000Z",
+      "durationMin": 53,
+      "strain": 14.5,
+      "avgHr": 161,
+      "maxHr": 184,
+      "kilojoules": 1031
+    },
+    {
+      "date": "2026-08-13",
+      "sport": "Cycling",
+      "emoji": "🚴",
+      "start": "2026-08-13T11:51:00.000Z",
+      "durationMin": 73,
+      "strain": 10.9,
+      "avgHr": 161,
+      "maxHr": 181,
+      "kilojoules": 1471
+    },
+    {
+      "date": "2026-08-12",
+      "sport": "HIIT",
+      "emoji": "🔥",
+      "start": "2026-08-12T11:41:00.000Z",
+      "durationMin": 64,
+      "strain": 10.8,
+      "avgHr": 153,
+      "maxHr": 173,
+      "kilojoules": 763
+    }
+  ]
+}
