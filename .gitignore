@@ -2,3 +2,5 @@ node_modules/
 smoke.png
 src/last-dashboard.json
 .DS_Store
+reference/
+vendor/whoop-mcp/node_modules/
