@@ -1426,6 +1426,41 @@ button {
   border-color: var(--strain);
 }
 
+.settings-row-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.settings-text {
+  width: 100%;
+  background: var(--bg-panel);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.settings-text::placeholder {
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-weight: 500;
+}
+
+.settings-text:focus {
+  outline: none;
+  border-color: var(--strain);
+}
+
+.settings-hint {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
 /* ---------------- toast ---------------- */
 
 .toast {

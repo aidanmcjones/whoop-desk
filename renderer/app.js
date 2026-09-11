@@ -2171,8 +2171,8 @@
       gate.innerHTML =
         '<span class="micro-label">Coach</span>' +
         '<h3 class="coach-gate-title">Coach isn&rsquo;t connected yet</h3>' +
-        '<p class="coach-gate-body">Connect a Claude API key or the Claude CLI on the backend to chat about your ' +
-        'recovery, sleep, and strain trends here.</p>';
+        '<p class="coach-gate-body">Sign in with the claude CLI (<code>claude auth login</code>) or paste an ' +
+        'Anthropic API key in Settings to chat about your recovery, sleep, and strain trends here.</p>';
     } else {
       gate.hidden = true;
       chat.hidden = false;
@@ -2235,6 +2235,13 @@
       '<label class="settings-label" for="setting-refresh">Auto-refresh (minutes)</label>' +
       '<input type="number" id="setting-refresh" class="settings-number" min="5" max="120" step="5" value="' +
       fmtInt(s.autoRefreshMins) + '" data-key="autoRefreshMins" />' +
+      '</div>' +
+      '<div class="settings-row settings-row-stacked">' +
+      '<label class="settings-label" for="setting-api-key">Anthropic API key (optional)</label>' +
+      '<input type="password" id="setting-api-key" class="settings-text" autocomplete="off" spellcheck="false" ' +
+      'placeholder="Blank = use the signed-in claude CLI" value="' + escapeHTML(s.anthropicApiKey || '') +
+      '" data-key="anthropicApiKey" />' +
+      '<span class="settings-hint">Coach runs Claude Sonnet 5 (medium effort) on your own account.</span>' +
       '</div>';
   }
 
@@ -2492,11 +2499,16 @@
         if (res && !res.error) state.settings = res;
       });
       settingsOverlay.addEventListener('change', async function (e) {
-        var input = e.target.closest('.settings-number');
+        var input = e.target.closest('.settings-number, .settings-text');
         if (!input) return;
         var key = input.dataset.key;
-        var val = Number(input.value);
-        if (!isNum(val)) return;
+        var val;
+        if (input.classList.contains('settings-text')) {
+          val = String(input.value || '').trim();
+        } else {
+          val = Number(input.value);
+          if (!isNum(val)) return;
+        }
         var patch = {};
         patch[key] = val;
         var res = await callApi('setSettings', [patch], mockSetSettings);
