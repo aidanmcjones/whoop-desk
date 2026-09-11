@@ -1,27 +1,35 @@
-// AI coach for whoop-desk: answers questions about the user's WHOOP data,
-// backed by the Claude API (preferred) or the `claude` CLI (fallback).
+// AI coach for whoop-desk: answers questions about the user's WHOOP data.
 //
 // Node >= 20, ESM. Runs in the Electron MAIN process.
 //
-// Credential resolution is entirely delegated to the official SDK
-// (`new Anthropic()` with zero args) — it resolves ANTHROPIC_API_KEY,
-// ANTHROPIC_AUTH_TOKEN, or an `ant auth login` profile automatically.
-// Never hardcode a key here.
+// Model: Claude Sonnet 5 at medium effort, on the user's own Anthropic account.
+//
+// Credential resolution, in order:
+//   1. An API key the user pasted into Settings (settings.anthropicApiKey),
+//      or ANTHROPIC_API_KEY in the app's environment  -> official SDK, api.anthropic.com
+//   2. The `claude` CLI, which is signed in to the user's Anthropic account
+//      via OAuth                                        -> `claude -p`
+//
+// Sandbox hygiene: if the app was launched from a Claude Code / agent shell,
+// its environment carries ANTHROPIC_BASE_URL=http://127.0.0.1:<port> and an
+// ANTHROPIC_AUTH_TOKEN for that session's private credential broker. Those
+// must never be used here (they yield "503 no accounts available"), so both
+// the SDK client and the CLI child process get a scrubbed environment.
 //
 // Exports:
-//   - coachStatus() -> { available, source: 'api' | 'cli' | null }
-//   - askCoach({ question, history, context }) -> { reply, source } | { reply: null, error, source }
+//   - coachStatus({ apiKey }) -> { available, source: 'api' | 'cli' | null, model }
+//   - askCoach({ question, history, context, apiKey })
+//       -> { reply, source, model } | { reply: null, error, source }
 
 import Anthropic from '@anthropic-ai/sdk';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
-const MODEL = 'claude-opus-5';
+export const MODEL = 'claude-sonnet-5';
+export const EFFORT = 'medium';
+const API_BASE_URL = 'https://api.anthropic.com';
 const MAX_TOKENS = 2048;
 const CLI_TIMEOUT_MS = 120000;
 
@@ -34,36 +42,72 @@ const SYSTEM_PROMPT_BASE = [
 ].join(' ');
 
 // -----------------------------------------------------------------------
-// Credential / availability detection
+// Environment scrubbing
 // -----------------------------------------------------------------------
-function hasApiCredentials() {
-  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN) return true;
+function isLoopbackUrl(value) {
+  if (!value) return false;
   try {
-    const profileDir = path.join(os.homedir(), '.config', 'anthropic');
-    return fs.existsSync(profileDir);
+    const host = new URL(value).hostname;
+    return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]';
   } catch {
     return false;
   }
 }
 
-async function hasClaudeCli() {
-  try {
-    const whichCmd = process.platform === 'win32' ? 'where' : 'which';
-    await execFileAsync(whichCmd, ['claude']);
-    return true;
-  } catch {
-    return false;
+// Returns a copy of process.env with any agent-session broker credentials
+// removed, so nested SDK/CLI calls hit the real Anthropic API with the
+// user's own credentials.
+export function cleanEnv(base = process.env) {
+  const env = { ...base };
+  const brokered = isLoopbackUrl(env.ANTHROPIC_BASE_URL);
+  if (brokered) {
+    delete env.ANTHROPIC_BASE_URL;
+    delete env.ANTHROPIC_AUTH_TOKEN; // token is only valid against the broker
   }
+  // Nested-session markers from a parent Claude Code process; a child
+  // `claude -p` should start clean rather than think it is a subagent.
+  for (const key of Object.keys(env)) {
+    if (key === 'CLAUDECODE' || key.startsWith('CLAUDE_CODE_') || key === 'CLAUDE_PID' || key === 'CLAUDE_JOB_DIR') {
+      delete env[key];
+    }
+  }
+  return env;
 }
 
-export async function coachStatus() {
-  if (hasApiCredentials()) {
-    return { available: true, source: 'api' };
+function resolveApiKey(explicitKey) {
+  const fromSettings = typeof explicitKey === 'string' ? explicitKey.trim() : '';
+  if (fromSettings) return fromSettings;
+  const env = cleanEnv();
+  const fromEnv = (env.ANTHROPIC_API_KEY || '').trim();
+  return fromEnv || null;
+}
+
+// -----------------------------------------------------------------------
+// Availability detection
+// -----------------------------------------------------------------------
+let cliPathCache; // undefined = not checked, null = not found, string = path
+
+async function findClaudeCli() {
+  if (cliPathCache !== undefined) return cliPathCache;
+  const whichCmd = process.platform === 'win32' ? 'where' : 'which';
+  try {
+    const { stdout } = await execFileAsync(whichCmd, ['claude'], { env: cleanEnv() });
+    const found = stdout.split(/\r?\n/).map((s) => s.trim()).find(Boolean);
+    cliPathCache = found || null;
+  } catch {
+    cliPathCache = null;
   }
-  if (await hasClaudeCli()) {
-    return { available: true, source: 'cli' };
+  return cliPathCache;
+}
+
+export async function coachStatus({ apiKey } = {}) {
+  if (resolveApiKey(apiKey)) {
+    return { available: true, source: 'api', model: MODEL, effort: EFFORT };
   }
-  return { available: false, source: null };
+  if (await findClaudeCli()) {
+    return { available: true, source: 'cli', model: MODEL, effort: EFFORT };
+  }
+  return { available: false, source: null, model: MODEL, effort: EFFORT };
 }
 
 // -----------------------------------------------------------------------
@@ -79,55 +123,48 @@ function shortError(err) {
   return message.length > 300 ? `${message.slice(0, 300)}…` : message;
 }
 
-// -----------------------------------------------------------------------
-// API path
-// -----------------------------------------------------------------------
-function looksLikeUnknownParamError(err) {
-  const status = err?.status ?? err?.statusCode;
-  const message = String(err?.message || '');
-  if (status === 400) return true;
-  return /unknown parameter|unrecognized|unexpected keyword|beta|fallback/i.test(message);
+function statusOf(err) {
+  return err?.status ?? err?.statusCode ?? null;
 }
 
+// -----------------------------------------------------------------------
+// API path (official SDK, user's API key)
+// -----------------------------------------------------------------------
 function extractText(response) {
-  const block = (response?.content || []).find((b) => b.type === 'text');
-  return block?.text ?? '';
+  return (response?.content || [])
+    .filter((b) => b.type === 'text')
+    .map((b) => b.text)
+    .join('')
+    .trim();
 }
 
-async function askViaApi({ question, history, context }) {
+async function askViaApi({ question, history, context, apiKey }) {
   const system = buildSystemPrompt(context);
   const messages = [
     ...(history || []).map((h) => ({ role: h.role, content: h.content })),
     { role: 'user', content: question },
   ];
 
-  const client = new Anthropic();
+  // Explicit baseURL + apiKey so no session broker env can leak in.
+  const client = new Anthropic({ apiKey, baseURL: API_BASE_URL });
 
+  const base = { model: MODEL, max_tokens: MAX_TOKENS, system, messages };
   let response;
   try {
-    response = await client.beta.messages.create({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      system,
-      messages,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
+    response = await client.messages.create({
+      ...base,
+      thinking: { type: 'adaptive' },
+      output_config: { effort: EFFORT },
     });
   } catch (err) {
-    if (!looksLikeUnknownParamError(err)) {
-      return { reply: null, error: shortError(err), source: 'api' };
+    if (statusOf(err) !== 400) {
+      return { reply: null, error: shortError(err), source: 'api', status: statusOf(err) };
     }
-    // Older SDK / API that doesn't know about server-side fallbacks yet —
-    // retry once with the plain (non-beta) call.
+    // Older API surface that rejects the thinking/effort params — retry plain.
     try {
-      response = await client.messages.create({
-        model: MODEL,
-        max_tokens: MAX_TOKENS,
-        system,
-        messages,
-      });
+      response = await client.messages.create(base);
     } catch (err2) {
-      return { reply: null, error: shortError(err2), source: 'api' };
+      return { reply: null, error: shortError(err2), source: 'api', status: statusOf(err2) };
     }
   }
 
@@ -135,34 +172,47 @@ async function askViaApi({ question, history, context }) {
     return {
       reply: "I can't help with that one — let's try a different question about your data.",
       source: 'api',
+      model: MODEL,
     };
   }
 
-  return { reply: extractText(response), source: 'api' };
+  return { reply: extractText(response), source: 'api', model: MODEL };
 }
 
 // -----------------------------------------------------------------------
-// CLI fallback path
+// CLI path (`claude -p`, signed in to the user's account via OAuth)
 // -----------------------------------------------------------------------
-function buildCliPrompt({ question, history, context }) {
-  const system = buildSystemPrompt(context);
+function buildCliPrompt({ question, history }) {
   const historyText = (history || [])
     .map((h) => `${h.role === 'assistant' ? 'Coach' : 'User'}: ${h.content}`)
     .join('\n');
-  return [system, historyText, `User: ${question}`].filter(Boolean).join('\n\n');
+  return [historyText, `User: ${question}`].filter(Boolean).join('\n\n');
 }
 
 async function askViaCli({ question, history, context }) {
-  const fullPrompt = buildCliPrompt({ question, history, context });
+  const cli = await findClaudeCli();
+  if (!cli) return { reply: null, error: 'The claude CLI is not installed.', source: 'cli' };
+
+  const args = [
+    '-p', buildCliPrompt({ question, history }),
+    '--system-prompt', buildSystemPrompt(context),
+    '--model', MODEL,
+    '--effort', EFFORT,
+    '--output-format', 'json',
+    '--tools', '',
+    '--no-session-persistence',
+  ];
 
   let stdout;
   try {
-    ({ stdout } = await execFileAsync('claude', ['-p', fullPrompt, '--output-format', 'json'], {
+    ({ stdout } = await execFileAsync(cli, args, {
+      env: cleanEnv(),
       timeout: CLI_TIMEOUT_MS,
       maxBuffer: 10 * 1024 * 1024,
     }));
   } catch (err) {
-    return { reply: null, error: shortError(err), source: 'cli' };
+    const detail = (err && (err.stderr || err.stdout || err.message)) || String(err);
+    return { reply: null, error: shortError({ message: String(detail).trim() }), source: 'cli' };
   }
 
   let parsed;
@@ -172,8 +222,11 @@ async function askViaCli({ question, history, context }) {
     return { reply: null, error: 'Could not parse the claude CLI response as JSON.', source: 'cli' };
   }
 
+  if (parsed && parsed.is_error) {
+    return { reply: null, error: shortError({ message: parsed.result || 'claude CLI reported an error.' }), source: 'cli' };
+  }
   if (parsed && typeof parsed.result === 'string') {
-    return { reply: parsed.result, source: 'cli' };
+    return { reply: parsed.result.trim(), source: 'cli', model: MODEL };
   }
   return { reply: null, error: 'claude CLI response was missing a "result" field.', source: 'cli' };
 }
@@ -181,19 +234,26 @@ async function askViaCli({ question, history, context }) {
 // -----------------------------------------------------------------------
 // Public API
 // -----------------------------------------------------------------------
-export async function askCoach({ question, history = [], context } = {}) {
-  const status = await coachStatus();
+export async function askCoach({ question, history = [], context, apiKey } = {}) {
+  const key = resolveApiKey(apiKey);
+  const cli = await findClaudeCli();
 
-  if (!status.available) {
+  if (!key && !cli) {
     return {
       reply: null,
-      error: 'No Claude credentials or CLI found — set ANTHROPIC_API_KEY, run `ant auth login`, or install the claude CLI.',
+      error: 'No Anthropic credentials found — sign in with the claude CLI (`claude auth login`) or paste an API key in Settings.',
       source: null,
     };
   }
 
-  if (status.source === 'api') {
-    return askViaApi({ question, history, context });
+  if (key) {
+    const viaApi = await askViaApi({ question, history, context, apiKey: key });
+    // Server-side trouble with the key path: fall through to the signed-in CLI.
+    const status = viaApi.status;
+    if (viaApi.reply != null || !cli || !(status == null || status >= 500 || status === 401 || status === 403)) {
+      return viaApi;
+    }
   }
+
   return askViaCli({ question, history, context });
 }

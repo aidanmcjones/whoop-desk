@@ -105,6 +105,9 @@ if (!gotLock) {
     notificationsEnabled: true,
     morningHour: 8,
     autoRefreshMins: 15,
+    // Optional. When blank, the coach uses the signed-in `claude` CLI
+    // (the user's own Anthropic account via OAuth).
+    anthropicApiKey: '',
     // Internal, persisted alongside the user-facing settings above: tracks
     // the anomaly flag's last-known state so we only notify on a
     // false -> true transition rather than on every refresh.
@@ -605,7 +608,7 @@ if (!gotLock) {
   ipcMain.handle('whoop:coachStatus', async () => {
     try {
       const coach = await loadCoach();
-      return await coach.coachStatus();
+      return await coach.coachStatus({ apiKey: settings.anthropicApiKey });
     } catch (err) {
       return { error: String(err) };
     }
@@ -615,7 +618,12 @@ if (!gotLock) {
     try {
       const coach = await loadCoach();
       const context = await buildCoachContext();
-      return await coach.askCoach({ question, history: chatHistory, context });
+      return await coach.askCoach({
+        question,
+        history: chatHistory,
+        context,
+        apiKey: settings.anthropicApiKey,
+      });
     } catch (err) {
       return { error: String(err) };
     }
