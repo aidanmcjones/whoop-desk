@@ -24,6 +24,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const execFileAsync = promisify(execFile);
 
@@ -57,8 +60,26 @@ function isLoopbackUrl(value) {
 // Returns a copy of process.env with any agent-session broker credentials
 // removed, so nested SDK/CLI calls hit the real Anthropic API with the
 // user's own credentials.
+// Directories where the claude CLI is commonly installed. A GUI app launched
+// from the Dock/Finder only gets /usr/bin:/bin:/usr/sbin:/sbin, so these are
+// appended to PATH for every child process and searched directly.
+const CLI_DIRS = [
+  path.join(os.homedir(), '.local', 'bin'),
+  path.join(os.homedir(), '.claude', 'local'),
+  path.join(os.homedir(), '.npm-global', 'bin'),
+  '/opt/homebrew/bin',
+  '/usr/local/bin',
+];
+
+function augmentedPath(current) {
+  const parts = (current || '').split(path.delimiter).filter(Boolean);
+  for (const dir of CLI_DIRS) if (!parts.includes(dir)) parts.push(dir);
+  return parts.join(path.delimiter);
+}
+
 export function cleanEnv(base = process.env) {
   const env = { ...base };
+  env.PATH = augmentedPath(env.PATH);
   const brokered = isLoopbackUrl(env.ANTHROPIC_BASE_URL);
   if (brokered) {
     delete env.ANTHROPIC_BASE_URL;
@@ -85,17 +106,39 @@ function resolveApiKey(explicitKey) {
 // -----------------------------------------------------------------------
 // Availability detection
 // -----------------------------------------------------------------------
-let cliPathCache; // undefined = not checked, null = not found, string = path
+let cliPathCache = null; // only successful lookups are cached
 
-async function findClaudeCli() {
-  if (cliPathCache !== undefined) return cliPathCache;
+function isExecutable(file) {
+  try {
+    fs.accessSync(file, fs.constants.X_OK);
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+export async function findClaudeCli() {
+  if (cliPathCache && isExecutable(cliPathCache)) return cliPathCache;
+  cliPathCache = null;
+
+  const exe = process.platform === 'win32' ? 'claude.exe' : 'claude';
+  const env = cleanEnv();
+  for (const dir of env.PATH.split(path.delimiter)) {
+    const candidate = path.join(dir, exe);
+    if (dir && isExecutable(candidate)) {
+      cliPathCache = candidate;
+      return cliPathCache;
+    }
+  }
+
+  // Last resort: ask the shell (covers unusual layouts / shims).
   const whichCmd = process.platform === 'win32' ? 'where' : 'which';
   try {
-    const { stdout } = await execFileAsync(whichCmd, ['claude'], { env: cleanEnv() });
+    const { stdout } = await execFileAsync(whichCmd, ['claude'], { env });
     const found = stdout.split(/\r?\n/).map((s) => s.trim()).find(Boolean);
-    cliPathCache = found || null;
+    if (found && isExecutable(found)) cliPathCache = found;
   } catch {
-    cliPathCache = null;
+    /* not found */
   }
   return cliPathCache;
 }
@@ -251,6 +294,9 @@ export async function askCoach({ question, history = [], context, apiKey } = {})
     // Server-side trouble with the key path: fall through to the signed-in CLI.
     const status = viaApi.status;
     if (viaApi.reply != null || !cli || !(status == null || status >= 500 || status === 401 || status === 403)) {
+      if (viaApi.reply == null && (status === 401 || status === 403)) {
+        viaApi.error = `Anthropic rejected the API key in Settings (${status}). Clear that field to use the signed-in claude CLI instead, or paste a valid key.`;
+      }
       return viaApi;
     }
   }
