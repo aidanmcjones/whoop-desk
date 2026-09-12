@@ -2158,6 +2158,57 @@
 
   /* ---------------- view: coach ---------------- */
 
+  // Minimal, safe Markdown for coach replies: text is HTML-escaped first,
+  // then only bold/italic/code/bullets/numbered lists/paragraphs are added.
+  function inlineMd(s) {
+    return s
+      .replace(/`([^`]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\w)/g, '$1<em>$2</em>')
+      .replace(/(^|[^_\w])_([^_\n]+)_(?!\w)/g, '$1<em>$2</em>');
+  }
+
+  function renderMarkdown(text) {
+    var lines = escapeHTML(String(text || '')).replace(/\r\n?/g, '\n').split('\n');
+    var html = '';
+    var para = [];
+    var list = null; // { tag, items }
+
+    function flushPara() {
+      if (para.length) {
+        html += '<p>' + para.map(inlineMd).join('<br>') + '</p>';
+        para = [];
+      }
+    }
+    function flushList() {
+      if (list) {
+        html += '<' + list.tag + '>' + list.items.map(function (i) { return '<li>' + inlineMd(i) + '</li>'; }).join('') + '</' + list.tag + '>';
+        list = null;
+      }
+    }
+
+    lines.forEach(function (raw) {
+      var line = raw.replace(/\s+$/, '');
+      var bullet = /^\s*[-*•]\s+(.*)$/.exec(line);
+      var numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
+      var heading = /^\s*#{1,6}\s+(.*)$/.exec(line);
+      if (!line.trim()) { flushPara(); flushList(); return; }
+      if (bullet || numbered) {
+        flushPara();
+        var tag = bullet ? 'ul' : 'ol';
+        if (!list || list.tag !== tag) { flushList(); list = { tag: tag, items: [] }; }
+        list.items.push((bullet || numbered)[1]);
+        return;
+      }
+      flushList();
+      if (heading) { flushPara(); html += '<p><strong>' + inlineMd(heading[1]) + '</strong></p>'; return; }
+      para.push(line.trim());
+    });
+    flushPara();
+    flushList();
+    return html;
+  }
+
   function renderCoachMessages() {
     var el = document.getElementById('coach-messages');
     if (!el) return;
@@ -2165,8 +2216,10 @@
       el.innerHTML = '<div class="empty-state">Ask about your recovery, sleep, or strain to get started.</div>';
     } else {
       el.innerHTML = state.coachHistory.map(function (m) {
-        var cls = m.role === 'user' ? 'coach-msg coach-msg-user' : 'coach-msg coach-msg-assistant';
-        return '<div class="' + cls + '"><p>' + escapeHTML(m.content) + '</p></div>';
+        if (m.role === 'user') {
+          return '<div class="coach-msg coach-msg-user"><p>' + escapeHTML(m.content) + '</p></div>';
+        }
+        return '<div class="coach-msg coach-msg-assistant">' + renderMarkdown(m.content) + '</div>';
       }).join('');
     }
     el.scrollTop = el.scrollHeight;
