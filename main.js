@@ -431,11 +431,6 @@ if (!gotLock) {
   // -----------------------------------------------------------------------
   // Analytics / backfill-status (shared by IPC handlers and --ipc-check)
   // -----------------------------------------------------------------------
-  function trimNote(note) {
-    if (typeof note !== 'string') return note;
-    return note.length > 400 ? `${note.slice(0, 400)}…` : note;
-  }
-
   async function fetchAnalytics(days = 30) {
     const historyMod = await loadHistory();
     const analyticsMod = await loadAnalytics();
@@ -490,34 +485,13 @@ if (!gotLock) {
     const historyMod = await loadHistory();
     const analyticsMod = await loadAnalytics();
 
+    const contextMod = await import('./src/coach-context.mjs');
+
     const full = await historyMod.getHistory({ days: 0 });
     const recent = await historyMod.getHistory({ days: 14 });
-
-    const deviations = {
-      hrv: analyticsMod.deviation(full.recovery, 'hrv', { days: 28 }),
-      rhr: analyticsMod.deviation(full.recovery, 'rhr', { days: 28 }),
-      spo2: analyticsMod.deviation(full.recovery, 'spo2', { days: 28 }),
-      skinTempC: analyticsMod.deviation(full.recovery, 'skinTempC', { days: 28 }),
-      respiratoryRateBpm: analyticsMod.deviation(full.sleep, 'respiratoryRateBpm', { days: 28 }),
-    };
-    const acwrResult = analyticsMod.acwr(full.cycles);
-    const debtSeries = analyticsMod.sleepDebtSeries(full.sleep);
-    const cumulativeSleepDebtMin = debtSeries.length ? debtSeries[debtSeries.length - 1].cumulative7dMin : null;
-    const newestScore = full.recovery.find((r) => r.score != null)?.score ?? null;
-    const strainTarget = analyticsMod.strainTargetFor(newestScore);
     const journalEntries = journalStore ? await journalStore.listEntries({ days: 14 }) : [];
 
-    return {
-      profile: recent.profile,
-      recovery: recent.recovery.map((r) => ({ date: r.date, score: r.score, hrv: r.hrv, rhr: r.rhr })),
-      sleep: recent.sleep.map((s) => ({ date: s.date, performancePct: s.performancePct, durationMin: s.durationMin, debtMin: s.debtMin })),
-      cycles: recent.cycles.map((c) => ({ date: c.date, strain: c.strain })),
-      deviations,
-      acwr: acwrResult,
-      cumulativeSleepDebtMin,
-      journal: journalEntries.map((e) => ({ date: e.date, tags: e.tags, note: trimNote(e.note) })),
-      strainTarget,
-    };
+    return contextMod.buildCoachContext({ full, recent, analytics: analyticsMod, journalEntries });
   }
 
   // -----------------------------------------------------------------------
