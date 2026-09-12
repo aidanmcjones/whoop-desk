@@ -676,11 +676,24 @@
     });
   }
 
+  // Slow calls that legitimately exceed the default budget (model round-trips).
+  var LONG_TIMEOUTS = { askCoach: 150000 };
+
+  // Backend errors arrive as { error: '<text>' }; renderer-side failures
+  // (timeouts, thrown IPC) as { error: true, message: '<text>' }.
+  function apiErrorText(res, fallback) {
+    if (!res) return fallback;
+    if (typeof res.error === 'string' && res.error) return res.error;
+    if (typeof res.message === 'string' && res.message) return res.message;
+    return fallback;
+  }
+
   async function callApi(name, args, mockFn) {
     args = args || [];
     try {
       if (window.whoop && typeof window.whoop[name] === 'function') {
-        return await withTimeout(window.whoop[name].apply(window.whoop, args), API_TIMEOUT_MS);
+        var budget = LONG_TIMEOUTS[name] || API_TIMEOUT_MS;
+        return await withTimeout(window.whoop[name].apply(window.whoop, args), budget);
       }
       return await mockFn.apply(null, args);
     } catch (err) {
@@ -2127,7 +2140,7 @@
       : await callApi('addJournalEntry', [payload], mockAddJournalEntry);
     if (saveBtn) saveBtn.disabled = false;
     if (!res || res.error) {
-      showToast('Could not save entry: ' + ((res && res.error) || 'unknown error'));
+      showToast('Could not save entry: ' + apiErrorText(res, 'unknown error'));
       return;
     }
     showToast(editingId ? 'Journal entry updated' : 'Journal entry saved');
@@ -2138,7 +2151,7 @@
   async function handleJournalDelete(id) {
     if (!id) return;
     var res = await callApi('deleteJournalEntry', [id], mockDeleteJournalEntry);
-    if (res && res.error) { showToast('Could not delete entry: ' + res.error); return; }
+    if (res && res.error) { showToast('Could not delete entry: ' + apiErrorText(res, 'unknown error')); return; }
     showToast('Journal entry deleted');
     await renderJournal();
   }
@@ -2198,10 +2211,10 @@
     state.coachBusy = false;
     if (thinking) thinking.hidden = true;
     if (sendBtn) sendBtn.disabled = false;
-    if (res && res.reply) {
+    if (res && typeof res.reply === 'string' && res.reply) {
       state.coachHistory.push({ role: 'assistant', content: res.reply });
     } else {
-      state.coachHistory.push({ role: 'assistant', content: (res && res.error) || 'Sorry, something went wrong.' });
+      state.coachHistory.push({ role: 'assistant', content: apiErrorText(res, 'Sorry, something went wrong.') });
     }
     renderCoachMessages();
   }
@@ -2450,7 +2463,7 @@
       var res = await callApi('exportCsv', [{ kind: kind }], mockExportCsv);
       btn.disabled = false;
       if (res && res.error) {
-        showToast('Export failed: ' + res.error);
+        showToast('Export failed: ' + apiErrorText(res, 'unknown error'));
       } else if (res) {
         showToast(res.path
           ? 'Exported ' + res.rows + ' rows to ' + res.path
