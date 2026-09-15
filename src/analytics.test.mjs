@@ -8,7 +8,6 @@ import {
   acwr,
   sleepDebtSeries,
   anomaly,
-  correlate,
   periodCompare,
 } from './analytics.mjs';
 
@@ -107,8 +106,6 @@ test('null-tolerant fields never produce NaN across all analytics fns', () => {
   assertNoNaN(sleepDebtSeries(sleep), 'sleepDebtSeries');
   assertNoNaN(anomaly({ recovery, sleep }), 'anomaly');
   assertNoNaN(anomaly({ recovery: [], sleep: [] }), 'anomaly(empty)');
-  assertNoNaN(correlate([], recovery), 'correlate(no entries)');
-  assertNoNaN(correlate([{ date: dAgo(1), tags: ['sick'], note: '' }], recovery), 'correlate');
   assertNoNaN(periodCompare({ recovery, sleep, cycles }), 'periodCompare');
   assertNoNaN(periodCompare({ recovery: [], sleep: [], cycles: [] }), 'periodCompare(empty)');
 });
@@ -258,43 +255,6 @@ test('anomaly: hrv drop counts toward rhr point when rhr is null', () => {
   assert.equal(result.score, 1);
   assert.equal(result.flagged, false); // needs score >= 2
   assert.match(result.reasons[0], /HRV/);
-});
-
-// -----------------------------------------------------------------------
-// correlate
-// -----------------------------------------------------------------------
-test('correlate computes known deltas and excludes low-n tags', () => {
-  const journalEntries = [
-    { date: '2026-01-01', tags: ['alcohol'], note: '' },
-    { date: '2026-01-02', tags: ['alcohol'], note: '' },
-    { date: '2026-01-03', tags: ['alcohol'], note: '' },
-    { date: '2026-01-04', tags: ['alcohol'], note: '' },
-    { date: '2026-01-05', tags: ['travel'], note: '' }, // n=1, excluded
-    { date: '2026-01-06', tags: [], note: '' },
-    { date: '2026-01-07', tags: [], note: '' },
-  ];
-  const recovery = [
-    { date: '2026-01-02', score: 50 }, // next day after 01-01
-    { date: '2026-01-03', score: 52 }, // next day after 01-02
-    { date: '2026-01-04', score: 48 }, // next day after 01-03
-    { date: '2026-01-05', score: 54 }, // next day after 01-04
-    { date: '2026-01-06', score: 70 }, // next day after 01-05
-    { date: '2026-01-07', score: 72 }, // next day after 01-06
-    { date: '2026-01-08', score: 68 }, // next day after 01-07
-  ];
-
-  const results = correlate(journalEntries, recovery);
-  assert.equal(results.length, 1);
-  const [alcohol] = results;
-  assert.equal(alcohol.tag, 'alcohol');
-  assert.equal(alcohol.n, 4);
-  assert.equal(alcohol.avgNextDayRecoveryDelta, -19);
-  assert.equal(alcohol.direction, 'negative');
-});
-
-test('correlate returns empty array with no entries or no recovery data', () => {
-  assert.deepEqual(correlate([], []), []);
-  assert.deepEqual(correlate([{ date: '2026-01-01', tags: ['sick'] }], []), []);
 });
 
 // -----------------------------------------------------------------------

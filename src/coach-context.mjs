@@ -1,5 +1,5 @@
 // Builds the data packet the coach reasons over. Pure function of already
-// loaded history/analytics/journal data, so it is testable outside Electron.
+// loaded history and analytics data, so it is testable outside Electron.
 //
 // Design goals:
 //   - Complete enough that any "break down X" question can be answered from
@@ -8,7 +8,7 @@
 //   - 28-day baselines for the key metrics, so "vs your usual" is grounded.
 //
 // Exports:
-//   buildCoachContext({ full, recent, analytics, journalEntries, now, timeZone })
+//   buildCoachContext({ full, recent, analytics, now, timeZone })
 
 const round = (v, dp = 0) => (v == null || !Number.isFinite(Number(v)) ? null : Number(Number(v).toFixed(dp)));
 const kjToKcal = (kj) => (kj == null ? null : Math.round(kj / 4.184));
@@ -52,7 +52,6 @@ export function buildCoachContext({
   full,
   recent,
   analytics,
-  journalEntries = [],
   now = new Date(),
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
 } = {}) {
@@ -175,10 +174,5 @@ export function buildCoachContext({
     sleepDebt7d: sleepDebt7dMin == null ? null : { min: round(sleepDebt7dMin), pretty: hm(sleepDebt7dMin) },
     acwr,
     strainTarget: analytics.strainTargetFor(newestScore),
-    journal: journalEntries.map((e) => ({
-      date: e.date,
-      tags: e.tags,
-      note: typeof e.note === 'string' && e.note.length > 400 ? `${e.note.slice(0, 400)}…` : e.note,
-    })),
   };
 }

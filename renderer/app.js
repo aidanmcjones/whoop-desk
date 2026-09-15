@@ -11,10 +11,10 @@
    Element contract expected from index.html:
      #reconnect-state, #reconnect-message, #reconnect-retry-btn
      #main-shell, #sidebar, #nav, .nav-item[data-view], #refresh-btn,
-     #last-updated, #backfill-indicator, #settings-btn
+     #last-updated, #settings-btn
      #top-bar, #greeting, #selected-date, #day-strip
      #content, .view (#view-overview/#view-sleep/#view-strain/
-                      #view-health/#view-trends/#view-journal/#view-coach)
+                      #view-health/#view-trends/#view-coach)
      overview: #anomaly-banner #recovery-hero #strain-card-overview
                #sleep-summary-card #metric-cards #overview-trend
                #overview-activities
@@ -29,11 +29,6 @@
                #range-6m #range-ytd #trend-recovery #trend-hrv #trend-rhr
                #trend-sleep #trend-strain #trend-compare #trend-dashboard
                #trends-export-group .export-btn[data-kind]
-     journal:  #journal-add-card #journal-insights-card
-               #journal-entries-card (composer/list ids built dynamically:
-               #journal-date-input #journal-tag-chips
-               #journal-custom-tag-input #journal-add-tag-btn
-               #journal-note-input #journal-save-btn #journal-cancel-btn)
      coach:    #coach-gate-card #coach-chat #coach-messages
                #coach-thinking #coach-input-form #coach-input
                #coach-send-btn
@@ -75,19 +70,10 @@
     activeView: 'overview',
     trendRange: 7, // number of days, or the string 'ytd'
     settings: null,
-    backfillStatus: null,
     coachStatus: null,
     coachHistory: [], // [{role:'user'|'assistant', content}]
     coachBusy: false,
-    journalTagsCache: null,
-    journalEntriesCache: [],
-    editingJournalId: null,
   };
-
-  var SUGGESTED_TAGS = [
-    'alcohol', 'caffeine-late', 'late-meal', 'travel', 'sick', 'stress',
-    'late-screen', 'early-workout', 'sauna', 'reading-before-bed',
-  ];
 
   // Charts are declared as slots while a card's HTML is built, then filled
   // once the slot is in the DOM and its real pixel width is measurable.
@@ -716,82 +702,8 @@
     } catch (e) { /* ignore (private mode / quota) */ }
   }
 
-  var LS_JOURNAL = 'whoopdesk.mock.journal';
   var LS_SETTINGS = 'whoopdesk.mock.settings';
   var LS_DISMISSED = 'whoopdesk.mock.dismissedAnomalies';
-
-  function mockJournalEntries() {
-    var stored = lsGet(LS_JOURNAL, null);
-    if (stored == null) {
-      stored = (state.data && Array.isArray(state.data.journal)) ? state.data.journal.slice() : [];
-      lsSet(LS_JOURNAL, stored);
-    }
-    return stored;
-  }
-
-  function mockJournalSave(entries) {
-    lsSet(LS_JOURNAL, entries);
-  }
-
-  function journalSort(entries) {
-    return entries.slice().sort(function (a, b) {
-      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
-      var ac = a.createdAt || '', bc = b.createdAt || '';
-      return ac === bc ? 0 : (ac < bc ? 1 : -1);
-    });
-  }
-
-  function mockGetJournal(args) {
-    var days = args && args.days;
-    var entries = mockJournalEntries();
-    if (days) {
-      var ref = state.dateList[0] || todayISO();
-      var cutoff = addDaysISO(ref, -(days - 1));
-      entries = entries.filter(function (e) { return e.date >= cutoff; });
-    }
-    return { entries: journalSort(entries) };
-  }
-
-  function mockAddJournalEntry(payload) {
-    payload = payload || {};
-    var entries = mockJournalEntries();
-    var entry = {
-      id: 'local-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
-      date: payload.date || state.dateList[0] || todayISO(),
-      tags: Array.isArray(payload.tags) ? payload.tags.slice() : [],
-      note: payload.note || '',
-      createdAt: new Date().toISOString(),
-    };
-    entries.push(entry);
-    mockJournalSave(entries);
-    return entry;
-  }
-
-  function mockUpdateJournalEntry(id, patch) {
-    var entries = mockJournalEntries();
-    var idx = entries.findIndex(function (e) { return e.id === id; });
-    if (idx === -1) return null;
-    var updated = Object.assign({}, entries[idx], patch || {}, { id: entries[idx].id });
-    entries[idx] = updated;
-    mockJournalSave(entries);
-    return updated;
-  }
-
-  function mockDeleteJournalEntry(id) {
-    var entries = mockJournalEntries();
-    var idx = entries.findIndex(function (e) { return e.id === id; });
-    if (idx === -1) return false;
-    entries.splice(idx, 1);
-    mockJournalSave(entries);
-    return true;
-  }
-
-  function mockJournalTags() {
-    var set = {};
-    SUGGESTED_TAGS.forEach(function (t) { set[t] = true; });
-    mockJournalEntries().forEach(function (e) { (e.tags || []).forEach(function (t) { set[t] = true; }); });
-    return Object.keys(set);
-  }
 
   function mockGetHistory(args) {
     var days = args && args.days;
@@ -810,11 +722,6 @@
       cycles: filterArr(data.cycles),
       workouts: filterArr(data.workouts),
     };
-  }
-
-  function mockGetBackfillStatus() {
-    return (state.data && state.data.backfillStatus) ||
-      { backfillComplete: true, running: false, counts: {}, oldestDate: null };
   }
 
   function meanSd(values) {
@@ -933,31 +840,6 @@
     return { a: a, b: b, delta: delta, pctDelta: pctDelta };
   }
 
-  function mockInsights() {
-    var entries = mockJournalEntries();
-    var tagStats = {};
-    entries.forEach(function (e) {
-      var nextDate = addDaysISO(e.date, 1);
-      var nextRec = state.byDate.recovery[nextDate];
-      if (!nextRec || !isNum(nextRec.score)) return;
-      var base = avgOf(valuesFor(windowDatesFromDate(e.date, 14), 'recovery', 'score'), 0);
-      if (!isNum(base)) return;
-      var delta = nextRec.score - base;
-      (e.tags || []).forEach(function (tag) {
-        if (!tagStats[tag]) tagStats[tag] = [];
-        tagStats[tag].push(delta);
-      });
-    });
-    return Object.keys(tagStats).map(function (tag) {
-      var deltas = tagStats[tag];
-      var avg = avgOf(deltas, 1);
-      return {
-        tag: tag, n: deltas.length, avgNextDayRecoveryDelta: avg,
-        direction: !isNum(avg) ? 'neutral' : (avg >= 0 ? 'positive' : 'negative'),
-      };
-    }).sort(function (a, b) { return Math.abs(b.avgNextDayRecoveryDelta || 0) - Math.abs(a.avgNextDayRecoveryDelta || 0); });
-  }
-
   function mockGetAnalytics(args) {
     var days = (args && args.days) || 30;
     var dateStr = state.dateList[state.selectedIndex];
@@ -990,7 +872,6 @@
         sleepHours: compareField('sleep', 'durationMin', 1, function (v) { return isNum(v) ? v / 60 : null; }),
         strain: compareField('cycle', 'strain', 1),
       },
-      insights: mockInsights(),
     };
   }
 
@@ -1022,7 +903,6 @@
     else if (kind === 'sleep') rows = (data.sleep || []).length;
     else if (kind === 'cycles') rows = (data.cycles || []).length;
     else if (kind === 'workouts') rows = (data.workouts || []).length;
-    else if (kind === 'journal') rows = mockJournalEntries().length;
     return { path: null, rows: rows, mock: true };
   }
 
@@ -1030,7 +910,7 @@
     var stored = lsGet(LS_SETTINGS, null);
     if (stored) return stored;
     var seed = (state.data && state.data.settings) ||
-      { launchAtLogin: false, notificationsEnabled: true, morningHour: 7, autoRefreshMins: 15 };
+      { launchAtLogin: false, notificationsEnabled: true, morningHour: 8, autoRefreshMins: 10 };
     lsSet(LS_SETTINGS, seed);
     return seed;
   }
@@ -1044,10 +924,6 @@
 
   function mockOnUpdated() {
     return function () {}; // no live push feed in mock mode
-  }
-
-  function mockOnBackfillProgress() {
-    return function () {};
   }
 
   // Merge a same-shape-as-dashboard payload (from getHistory) into the
@@ -2162,201 +2038,6 @@
     renderCompareCard((analyticsRes && !analyticsRes.error) ? analyticsRes : null);
   }
 
-  /* ---------------- view: journal ---------------- */
-
-  function renderJournalComposer(tags) {
-    var el = document.getElementById('journal-add-card');
-    if (!el) return;
-    var today = state.dateList[0] || todayISO();
-    el.innerHTML =
-      cardHead('Add Journal Entry') +
-      '<form id="journal-form" class="journal-form">' +
-      '<div class="journal-form-row">' +
-      '<label class="micro-label" for="journal-date-input">Date</label>' +
-      '<input id="journal-date-input" type="date" class="journal-date-input" value="' + today + '" max="' + today + '" />' +
-      '</div>' +
-      '<div class="journal-form-row">' +
-      '<span class="micro-label">Tags</span>' +
-      '<div id="journal-tag-chips" class="journal-tag-chips">' +
-      tags.map(function (t) {
-        return '<button type="button" class="journal-tag-chip" data-tag="' + escapeHTML(t) + '">' + escapeHTML(t) + '</button>';
-      }).join('') +
-      '</div>' +
-      '<div class="journal-custom-tag-row">' +
-      '<input id="journal-custom-tag-input" type="text" class="journal-custom-tag-input" placeholder="Add a custom tag&hellip;" />' +
-      '<button id="journal-add-tag-btn" type="button" class="journal-add-tag-btn">Add</button>' +
-      '</div>' +
-      '</div>' +
-      '<div class="journal-form-row">' +
-      '<label class="micro-label" for="journal-note-input">Note</label>' +
-      '<textarea id="journal-note-input" class="journal-note-input" rows="3" placeholder="What happened today?"></textarea>' +
-      '</div>' +
-      '<div class="journal-form-actions">' +
-      '<button id="journal-cancel-btn" type="button" class="journal-cancel-btn">Clear</button>' +
-      '<button id="journal-save-btn" type="submit" class="journal-save-btn">Save Entry</button>' +
-      '</div>' +
-      '</form>';
-  }
-
-  function renderJournalEntries(entries) {
-    var el = document.getElementById('journal-entries-card');
-    if (!el) return;
-    el.innerHTML =
-      cardHead('Entries', entries.length + ' total') +
-      (entries.length
-        ? '<div class="journal-entry-list">' +
-          entries.map(function (e) {
-            var dt = parseLocalDate(e.date);
-            return (
-              '<div class="journal-entry-row">' +
-              '<div class="journal-entry-head">' +
-              '<span class="journal-entry-date">' +
-              dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + '</span>' +
-              '<span class="journal-entry-actions">' +
-              '<button type="button" class="journal-edit-btn" data-id="' + escapeHTML(e.id) + '" aria-label="Edit entry">&#9998;</button>' +
-              '<button type="button" class="journal-delete-btn" data-id="' + escapeHTML(e.id) + '" aria-label="Delete entry">&times;</button>' +
-              '</span>' +
-              '</div>' +
-              ((e.tags && e.tags.length)
-                ? '<div class="journal-entry-tags">' +
-                  e.tags.map(function (t) { return '<span class="journal-entry-tag">' + escapeHTML(t) + '</span>'; }).join('') +
-                  '</div>'
-                : '') +
-              (e.note ? '<p class="journal-entry-note">' + escapeHTML(e.note) + '</p>' : '') +
-              '</div>'
-            );
-          }).join('') +
-          '</div>'
-        : '<div class="empty-state">No journal entries yet</div>');
-  }
-
-  function renderJournalInsights(analytics) {
-    var el = document.getElementById('journal-insights-card');
-    if (!el) return;
-    var insights = (analytics && analytics.insights) || [];
-    var top = insights.filter(function (i) { return i.n >= 2; }).slice(0, 6);
-    el.innerHTML =
-      cardHead('Tag Insights', 'Next-day recovery impact') +
-      (top.length
-        ? '<div class="stat-list">' +
-          top.map(function (i) {
-            var color = i.direction === 'positive' ? C.green : i.direction === 'negative' ? C.red : C.label;
-            return (
-              '<div class="stat-row"><span class="stat-row-label">' + escapeHTML(i.tag) + '</span>' +
-              '<span class="stat-row-right"><span class="stat-row-value" style="color:' + color + '">' +
-              fmtSigned(i.avgNextDayRecoveryDelta, 1) + ' pts</span>' +
-              '<span class="stat-row-prior">n=' + i.n + '</span></span></div>'
-            );
-          }).join('') +
-          '</div>'
-        : '<div class="empty-state">Log a few more entries to see tag correlations</div>');
-  }
-
-  async function renderJournal() {
-    await ensureHistoryFor(60);
-    var tagsRes = await callApi('journalTags', [], mockJournalTags);
-    var tags = Array.isArray(tagsRes) ? tagsRes
-      : (tagsRes && Array.isArray(tagsRes.tags)) ? tagsRes.tags : SUGGESTED_TAGS;
-    state.journalTagsCache = tags;
-    var journalRes = await callApi('getJournal', [{ days: 0 }], mockGetJournal);
-    var entries = (journalRes && Array.isArray(journalRes.entries)) ? journalRes.entries : [];
-    state.journalEntriesCache = entries;
-    var analyticsRes = await callApi('getAnalytics', [{ days: 60 }], mockGetAnalytics);
-    var analytics = (analyticsRes && !analyticsRes.error) ? analyticsRes : null;
-
-    state.editingJournalId = null;
-    renderJournalComposer(tags);
-    renderJournalEntries(entries);
-    renderJournalInsights(analytics);
-  }
-
-  function startEditJournalEntry(entry) {
-    if (!entry) return;
-    state.editingJournalId = entry.id;
-    var dateInput = document.getElementById('journal-date-input');
-    var noteInput = document.getElementById('journal-note-input');
-    var chips = document.getElementById('journal-tag-chips');
-    if (dateInput) dateInput.value = entry.date;
-    if (noteInput) noteInput.value = entry.note || '';
-    if (chips) {
-      var entryTags = entry.tags || [];
-      var present = {};
-      chips.querySelectorAll('.journal-tag-chip').forEach(function (b) {
-        present[b.dataset.tag] = true;
-        b.classList.toggle('active', entryTags.indexOf(b.dataset.tag) !== -1);
-      });
-      entryTags.forEach(function (t) {
-        if (present[t]) return;
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'journal-tag-chip active';
-        btn.dataset.tag = t;
-        btn.textContent = t;
-        chips.appendChild(btn);
-      });
-    }
-    var saveBtn = document.getElementById('journal-save-btn');
-    if (saveBtn) saveBtn.textContent = 'Update Entry';
-    var card = document.getElementById('journal-add-card');
-    if (card && card.scrollIntoView) card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }
-
-  function addCustomJournalTag() {
-    var input = document.getElementById('journal-custom-tag-input');
-    if (!input) return;
-    var val = input.value.trim().toLowerCase().replace(/\s+/g, '-');
-    input.value = '';
-    if (!val) return;
-    var chips = document.getElementById('journal-tag-chips');
-    if (!chips) return;
-    var found = null;
-    chips.querySelectorAll('.journal-tag-chip').forEach(function (b) {
-      if (b.dataset.tag === val) found = b;
-    });
-    if (found) { found.classList.add('active'); return; }
-    var btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'journal-tag-chip active';
-    btn.dataset.tag = val;
-    btn.textContent = val;
-    chips.appendChild(btn);
-  }
-
-  async function handleJournalSave() {
-    var dateInput = document.getElementById('journal-date-input');
-    var noteInput = document.getElementById('journal-note-input');
-    var chips = document.getElementById('journal-tag-chips');
-    var tags = [];
-    if (chips) chips.querySelectorAll('.journal-tag-chip.active').forEach(function (b) { tags.push(b.dataset.tag); });
-    var payload = {
-      date: (dateInput && dateInput.value) || state.dateList[0] || todayISO(),
-      tags: tags,
-      note: (noteInput && noteInput.value) || '',
-    };
-    var saveBtn = document.getElementById('journal-save-btn');
-    if (saveBtn) saveBtn.disabled = true;
-    var editingId = state.editingJournalId;
-    var res = editingId
-      ? await callApi('updateJournalEntry', [editingId, payload], mockUpdateJournalEntry)
-      : await callApi('addJournalEntry', [payload], mockAddJournalEntry);
-    if (saveBtn) saveBtn.disabled = false;
-    if (!res || res.error) {
-      showToast('Could not save entry: ' + apiErrorText(res, 'unknown error'));
-      return;
-    }
-    showToast(editingId ? 'Journal entry updated' : 'Journal entry saved');
-    state.editingJournalId = null;
-    await renderJournal();
-  }
-
-  async function handleJournalDelete(id) {
-    if (!id) return;
-    var res = await callApi('deleteJournalEntry', [id], mockDeleteJournalEntry);
-    if (res && res.error) { showToast('Could not delete entry: ' + apiErrorText(res, 'unknown error')); return; }
-    showToast('Journal entry deleted');
-    await renderJournal();
-  }
-
   /* ---------------- view: coach ---------------- */
 
   // Minimal, safe Markdown for coach replies: text is HTML-escaped first,
@@ -2478,7 +2159,7 @@
   async function renderSettings() {
     var res = await callApi('getSettings', [], mockGetSettings);
     state.settings = (res && !res.error) ? res
-      : { launchAtLogin: false, notificationsEnabled: true, morningHour: 7, autoRefreshMins: 15 };
+      : { launchAtLogin: false, notificationsEnabled: true, morningHour: 8, autoRefreshMins: 10 };
     var el = document.getElementById('settings-body');
     if (!el) return;
     var s = state.settings;
@@ -2528,30 +2209,6 @@
     }, 3000);
   }
 
-  /* ---------------- backfill indicator ---------------- */
-
-  function applyBackfillStatus(status) {
-    state.backfillStatus = status || null;
-    var el = document.getElementById('backfill-indicator');
-    if (!el) return;
-    if (!status || status.backfillComplete) {
-      el.hidden = true;
-      el.textContent = '';
-      return;
-    }
-    el.hidden = false;
-    var counts = status.counts || {};
-    var total = Object.keys(counts).reduce(function (s, k) { return s + (isNum(counts[k]) ? counts[k] : 0); }, 0);
-    el.textContent = status.running
-      ? 'Syncing history… ' + fmtInt(total) + ' records'
-      : 'History sync paused';
-  }
-
-  async function renderBackfillIndicator() {
-    var res = await callApi('getBackfillStatus', [], mockGetBackfillStatus);
-    applyBackfillStatus((res && !res.error) ? res : null);
-  }
-
   /* ---------------- view switching ---------------- */
 
   async function renderActiveView() {
@@ -2564,7 +2221,6 @@
     else if (view === 'strain') await renderStrain(dateStr);
     else if (view === 'health') renderHealth(dateStr);
     else if (view === 'trends') await renderTrends(state.trendRange);
-    else if (view === 'journal') await renderJournal();
     else if (view === 'coach') await renderCoach();
 
     var root = document.getElementById('view-' + view);
@@ -2641,7 +2297,6 @@
     renderHeader();
     renderDayStrip();
     await renderActiveView();
-    renderBackfillIndicator();
   }
 
   // Re-render triggered by window.whoop.onUpdated(cb) — a background
@@ -2784,36 +2439,6 @@
       });
     }
 
-    /* journal view */
-    var viewJournal = document.getElementById('view-journal');
-    if (viewJournal) {
-      viewJournal.addEventListener('click', function (e) {
-        var tagBtn = e.target.closest('.journal-tag-chip');
-        if (tagBtn) { tagBtn.classList.toggle('active'); return; }
-        if (e.target.closest('#journal-add-tag-btn')) { addCustomJournalTag(); return; }
-        if (e.target.closest('#journal-cancel-btn')) { state.editingJournalId = null; renderJournal(); return; }
-        var editBtn = e.target.closest('.journal-edit-btn');
-        if (editBtn) {
-          var entry = (state.journalEntriesCache || []).find(function (x) { return x.id === editBtn.dataset.id; });
-          if (entry) startEditJournalEntry(entry);
-          return;
-        }
-        var delBtn = e.target.closest('.journal-delete-btn');
-        if (delBtn) { handleJournalDelete(delBtn.dataset.id); return; }
-      });
-      viewJournal.addEventListener('keydown', function (e) {
-        if (e.target && e.target.id === 'journal-custom-tag-input' && e.key === 'Enter') {
-          e.preventDefault();
-          addCustomJournalTag();
-        }
-      });
-      viewJournal.addEventListener('submit', function (e) {
-        if (!e.target.closest('#journal-form')) return;
-        e.preventDefault();
-        handleJournalSave();
-      });
-    }
-
     /* coach view */
     var viewCoach = document.getElementById('view-coach');
     if (viewCoach) {
@@ -2830,9 +2455,6 @@
 
     if (window.whoop && typeof window.whoop.onUpdated === 'function') {
       window.whoop.onUpdated(function (freshData) { applyUpdate(freshData); });
-    }
-    if (window.whoop && typeof window.whoop.onBackfillProgress === 'function') {
-      window.whoop.onBackfillProgress(function (status) { applyBackfillStatus(status); });
     }
 
     loadAndRender();

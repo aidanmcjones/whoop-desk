@@ -114,12 +114,6 @@ const PRESETS = {
     { key: 'zones.z5Min', header: 'zones.z5Min' },
   ],
 
-  journal: [
-    'date',
-    { key: 'tags', header: 'tags', format: joinTags },
-    'note',
-    'createdAt',
-  ],
 };
 
 // -----------------------------------------------------------------------

@@ -30,7 +30,7 @@ const workouts = [
 const full = { profile: { firstName: 'A', heightM: 1.8, weightKg: 75, maxHr: 195 }, recovery, sleep, cycles, workouts };
 
 test('buildCoachContext exposes full sleep detail with pretty durations and local times', () => {
-  const ctx = buildCoachContext({ full, recent: full, analytics, journalEntries: [], now: new Date('2026-09-11T22:00:00-07:00'), timeZone: 'America/Los_Angeles' });
+  const ctx = buildCoachContext({ full, recent: full, analytics, now: new Date('2026-09-11T22:00:00-07:00'), timeZone: 'America/Los_Angeles' });
   const night = ctx.sleep[0];
   assert.equal(night.date, '2026-09-11');
   assert.equal(night.asleep, '7h 03m');
