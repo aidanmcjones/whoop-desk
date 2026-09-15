@@ -1177,10 +1177,12 @@
       var score = rec ? rec.score : null;
       var dt = parseLocalDate(dateStr);
       var active = dateStr === selected;
+      var isToday = dateStr === todayISO();
       return (
-        '<button class="day-item' + (active ? ' active' : '') + '" type="button" data-date="' + dateStr +
-        '" aria-pressed="' + active + '">' +
-        '<span class="day-weekday">' + dt.toLocaleDateString(undefined, { weekday: 'narrow' }) + '</span>' +
+        '<button class="day-item' + (active ? ' active' : '') + (isToday ? ' today' : '') +
+        '" type="button" data-date="' + dateStr + '" aria-pressed="' + active + '"' +
+        (isToday ? ' aria-current="date"' : '') + '>' +
+        '<span class="day-weekday">' + (isToday ? 'TODAY' : dt.toLocaleDateString(undefined, { weekday: 'narrow' })) + '</span>' +
         '<span class="day-ring-wrap">' +
         ringSVG({ size: 38, stroke: 3.4, pct: isNum(score) ? clamp(score, 0, 100) / 100 : 0, color: recoveryColor(score) }) +
         '<span class="day-number">' + dt.getDate() + '</span></span>' +
