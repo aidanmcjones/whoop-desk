@@ -732,6 +732,10 @@ if (!gotLock) {
     // default Overview; the smoke image is always written to smoke.png.
     const viewArg = process.argv.find((a) => a.startsWith('--view='));
     const smokeView = viewArg ? viewArg.slice('--view='.length) : null;
+    // `--scroll=<px|bottom>` scrolls the content column before the shot, so
+    // cards below the fold can be verified on a screen-sized window.
+    const scrollArg = process.argv.find((a) => a.startsWith('--scroll='));
+    const smokeScroll = scrollArg ? scrollArg.slice('--scroll='.length) : null;
 
     win.webContents.once('did-finish-load', () => {
       setTimeout(async () => {
@@ -743,6 +747,18 @@ if (!gotLock) {
             await new Promise((resolve) => setTimeout(resolve, 700));
           } catch (err) {
             consoleErrors.push(`view switch failed: ${err}`);
+          }
+        }
+        if (smokeScroll && /^(bottom|\d+)$/.test(smokeScroll)) {
+          try {
+            await win.webContents.executeJavaScript(
+              `(() => { const c = document.getElementById('content'); if (c) c.scrollTop = ${
+                smokeScroll === 'bottom' ? 'c.scrollHeight' : smokeScroll
+              }; })()`
+            );
+            await new Promise((resolve) => setTimeout(resolve, 400));
+          } catch (err) {
+            consoleErrors.push(`scroll failed: ${err}`);
           }
         }
         try {

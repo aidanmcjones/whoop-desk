@@ -1351,6 +1351,205 @@
       (rows || '<div class="empty-state">No activities logged</div>');
   }
 
+  /* ---------------- view: recovery ---------------- */
+
+  var RECOVERY_BANDS = [
+    { label: 'High', color: C.green, range: '67&ndash;100%', min: 67 },
+    { label: 'Moderate', color: C.yellow, range: '34&ndash;66%', min: 34 },
+    { label: 'Low', color: C.red, range: '0&ndash;33%', min: 0 },
+  ];
+
+  function recoveryBandFor(score) {
+    if (!isNum(score)) return null;
+    return score >= 67 ? RECOVERY_BANDS[0] : score >= 34 ? RECOVERY_BANDS[1] : RECOVERY_BANDS[2];
+  }
+
+  // Mirrors the mobile app's daily-outlook copy: what the body can take on
+  // today, tied to the strain target derived from this recovery score.
+  function recoveryOutlookCopy(score, target) {
+    var hasTarget = target && isNum(target.low) && isNum(target.high);
+    var range = hasTarget ? fmt(target.low, 1) + '&ndash;' + fmt(target.high, 1) : null;
+    if (!isNum(score)) {
+      return 'No recovery score for this day yet. Recovery is calculated from your sleep, so it appears once a night is recorded.';
+    }
+    if (score >= 67) {
+      return 'Your body is primed to take on a challenge today.' +
+        (range ? ' Aim for a Day Strain of <strong>' + range + '</strong> to build fitness without digging a hole.' : '');
+    }
+    if (score >= 34) {
+      return 'Your body is capable of moderate effort today.' +
+        (range ? ' For optimal recovery, keep Day Strain between <strong>' + range + '</strong>.' : '');
+    }
+    return 'Your body is asking for rest today.' +
+      (range ? ' Keep Day Strain under <strong>' + fmt(target.high, 1) + '</strong> and make sleep tonight the priority.' : '');
+  }
+
+  function driverRow(label, dev, valueHTML, priorHTML, better) {
+    return (
+      '<div class="stat-row"><span class="stat-row-label">' + label + '</span>' +
+      deviationBadge(dev, better) +
+      '<span class="stat-row-right"><span class="stat-row-value">' + valueHTML + '</span>' +
+      (priorHTML ? '<span class="stat-row-prior">' + priorHTML + '</span>' : '') +
+      '</span></div>'
+    );
+  }
+
+  async function renderRecovery(dateStr) {
+    var rec = state.byDate.recovery[dateStr] || null;
+    var slp = state.byDate.sleep[dateStr] || null;
+    var cyc = state.byDate.cycle[dateStr] || null;
+    var analyticsRes = await callApi('getAnalytics', [{ days: 30 }], mockGetAnalytics);
+    var analytics = (analyticsRes && !analyticsRes.error) ? analyticsRes : null;
+    var devs = (analytics && analytics.deviations) || {};
+
+    var score = rec ? rec.score : null;
+    var band = recoveryBandFor(score);
+    var color = recoveryColor(score);
+
+    /* hero ring */
+    var scoreWindow = valuesFor(windowDates(30, 1), 'recovery', 'score');
+    var scorePrior = avgOf(scoreWindow, 0);
+    document.getElementById('recovery-detail-hero').innerHTML =
+      cardHead('Recovery', band ? '<strong>' + band.label + '</strong> ' + band.range : '') +
+      '<div class="hero-body">' +
+      heroRing({
+        size: 188, stroke: 15, pct: isNum(score) ? clamp(score, 0, 100) / 100 : 0, color: color,
+        centerHTML:
+          '<div class="ring-value" style="color:' + color + '">' + fmt(score) +
+          (isNum(score) ? '<span class="ring-unit">%</span>' : '') + '</div>' +
+          '<div class="ring-sublabel">Recovery</div>',
+      }) +
+      '<div class="hero-caption">HRV <strong>' + fmt(rec && rec.hrv) + '</strong> ms &nbsp;&middot;&nbsp; RHR <strong>' +
+      fmt(rec && rec.rhr) + '</strong> bpm</div>' +
+      (scorePrior == null
+        ? ''
+        : '<div class="hero-chip-row"><span class="chip chip-neutral">30-day avg ' + scorePrior + '%</span></div>') +
+      '</div>';
+
+    /* daily outlook */
+    var target = analytics && analytics.strainTarget;
+    var strainSoFar = cyc ? cyc.strain : null;
+    document.getElementById('recovery-outlook-card').innerHTML =
+      cardHead('Daily Outlook', band ? '<span class="chip" style="color:' + band.color + '">' + band.label + '</span>' : '') +
+      '<p class="outlook-copy">' + recoveryOutlookCopy(score, target) + '</p>' +
+      '<div class="stat-list">' +
+      statRow('Strain target',
+        target && isNum(target.low) ? fmt(target.low, 1) + '&ndash;' + fmt(target.high, 1) : '--',
+        target && target.label ? target.label : '') +
+      statRow('Day strain so far', fmt(strainSoFar, 1),
+        target && isNum(target.center) ? 'target ' + fmt(target.center, 1) : '') +
+      statRow('Sleep performance', slp && isNum(slp.performancePct) ? slp.performancePct + '%' : '--',
+        slp && isNum(slp.debtMin) ? fmtHM(slp.debtMin) + ' debt' : '') +
+      '</div>';
+
+    /* recovery drivers: today vs prior 30 days */
+    var prior = windowDates(30, 1);
+    var hrvPrior = avgOf(valuesFor(prior, 'recovery', 'hrv'), 0);
+    var rhrPrior = avgOf(valuesFor(prior, 'recovery', 'rhr'), 0);
+    var spo2Prior = avgOf(valuesFor(prior, 'recovery', 'spo2'), 0);
+    var tempPrior = avgOf(valuesFor(prior, 'recovery', 'skinTempC'), 1);
+    var respPrior = avgOf(valuesFor(prior, 'sleep', 'respiratoryRateBpm'), 1);
+    var perfPrior = avgOf(valuesFor(prior, 'sleep', 'performancePct'), 0);
+    document.getElementById('recovery-drivers-card').innerHTML =
+      cardHead('Recovery Drivers', '<strong>Today</strong> vs. prior 30 days') +
+      '<div class="stat-list">' +
+      driverRow('Heart Rate Variability', devs.hrv, fmt(rec && rec.hrv) + ' ms',
+        hrvPrior == null ? '' : hrvPrior + ' ms avg', true) +
+      driverRow('Resting Heart Rate', devs.rhr, fmt(rec && rec.rhr) + ' bpm',
+        rhrPrior == null ? '' : rhrPrior + ' bpm avg', false) +
+      driverRow('Blood Oxygen', devs.spo2, fmt(rec && rec.spo2, 1) + '%',
+        spo2Prior == null ? '' : spo2Prior + '% avg', true) +
+      driverRow('Skin Temperature', devs.skinTempC, fmt(rec && rec.skinTempC, 1) + '&deg;C',
+        tempPrior == null ? '' : tempPrior + '&deg;C avg', null) +
+      driverRow('Respiratory Rate', devs.respiratoryRateBpm, fmt(slp && slp.respiratoryRateBpm, 1) + ' brpm',
+        respPrior == null ? '' : respPrior + ' brpm avg', null) +
+      statRow('Sleep Performance', slp && isNum(slp.performancePct) ? slp.performancePct + '%' : '--',
+        perfPrior == null ? '' : perfPrior + '% avg') +
+      '</div>';
+
+    /* metric tiles with 14-day sparklines */
+    var spark = windowDates(14);
+    document.getElementById('recovery-metric-cards').innerHTML = METRICS.map(function (m) {
+      var vals = valuesFor(spark, 'recovery', m.key);
+      var mean = avgOf(vals, m.decimals);
+      var dev = devs[m.key];
+      return (
+        '<div class="metric-card">' +
+        '<div class="metric-card-head"><span class="metric-card-label">' + m.label + '</span>' +
+        deviationBadge(dev, m.better) + '</div>' +
+        '<div class="metric-card-value">' + fmt(rec && rec[m.key], m.decimals) +
+        '<span class="unit">' + m.unit + '</span></div>' +
+        '<div class="metric-card-sub">14-day avg ' + (mean == null ? '--' : mean + (m.unit === '%' ? '%' : ' ' + m.unit)) + '</div>' +
+        chartSlot(function (w) { return sparklineSVG({ width: w, height: 44, values: vals, color: m.color }); }, 220) +
+        '</div>'
+      );
+    }).join('');
+
+    /* 30-day recovery trend, dots colored by band */
+    var tDates = windowDates(30);
+    var tVals = valuesFor(tDates, 'recovery', 'score');
+    var tAvg = avgOf(tVals, 0);
+    document.getElementById('recovery-trend-card').innerHTML =
+      cardHead('Recovery &mdash; last 30 days', 'Avg <strong>' + (tAvg == null ? '--' : tAvg + '%') + '</strong>') +
+      chartSlot(function (w) {
+        return lineChartSVG({
+          width: w, height: 250, dates: tDates, values: tVals, avg: tAvg,
+          yMin: 0, yMax: 100, color: C.label, lineColor: C.label, lineOpacity: 0.55,
+          dotColors: tVals.map(recoveryColor),
+          fmtTick: function (t) { return fmt(t) + '%'; },
+        });
+      }, 700) +
+      '<div class="trend-legend">' +
+      RECOVERY_BANDS.slice().reverse().map(function (b) {
+        return '<span class="trend-legend-item"><span class="trend-legend-dot" style="background:' + b.color +
+          '"></span>' + b.label + ' ' + b.range + '</span>';
+      }).join('') +
+      '</div>';
+
+    /* band breakdown over the same 30 days */
+    var present = tVals.filter(isNum);
+    var buckets = RECOVERY_BANDS.map(function (b) {
+      return {
+        label: b.label + ' (' + b.range + ')', color: b.color,
+        n: present.filter(function (v) { return recoveryBandFor(v) === b; }).length,
+      };
+    });
+    document.getElementById('recovery-breakdown-card').innerHTML =
+      cardHead('Recovery Breakdown', present.length + ' days') +
+      (present.length
+        ? '<div class="breakdown-bar">' +
+          buckets.map(function (b) {
+            return b.n ? '<div style="flex:' + b.n + ' 0 0%;background:' + b.color + '"></div>' : '';
+          }).join('') +
+          '</div><div class="breakdown-legend">' +
+          buckets.map(function (b) {
+            return '<span class="breakdown-item"><span class="stage-swatch" style="background:' + b.color +
+              '"></span><b>' + b.n + 'x</b> ' + b.label + '</span>';
+          }).join('') + '</div>'
+        : '<div class="empty-state">No recovery scores in range</div>');
+
+    /* how each night fed the next morning's recovery */
+    var linkDates = windowDates(7).slice().reverse();
+    var linkRows = linkDates.map(function (d) {
+      var r = state.byDate.recovery[d];
+      var s = state.byDate.sleep[d];
+      var rv = r && isNum(r.score) ? r.score : null;
+      var parts = [];
+      if (s && isNum(s.performancePct)) parts.push('Sleep ' + s.performancePct + '%');
+      if (s && isNum(s.durationMin)) parts.push(fmtHM(s.durationMin));
+      if (r && isNum(r.hrv)) parts.push('HRV ' + fmt(r.hrv) + ' ms');
+      if (r && isNum(r.rhr)) parts.push('RHR ' + fmt(r.rhr) + ' bpm');
+      return statRow(
+        headerDateLabel(d, state.dateList.indexOf(d)),
+        '<span style="color:' + recoveryColor(rv) + '">' + fmt(rv) + (isNum(rv) ? '%' : '') + '</span>',
+        parts.join(' &middot; ')
+      );
+    }).join('');
+    document.getElementById('recovery-sleep-link-card').innerHTML =
+      cardHead('Sleep &rarr; Recovery, last 7 days', 'Each morning&rsquo;s score next to the night before it') +
+      (linkRows ? '<div class="stat-list">' + linkRows + '</div>' : '<div class="empty-state">No data in range</div>');
+  }
+
   /* ---------------- view: sleep ---------------- */
 
   var STAGES = [
@@ -2358,6 +2557,7 @@
     var dateStr = state.dateList[state.selectedIndex];
     var view = state.activeView;
     if (view === 'overview') await renderOverview(dateStr);
+    else if (view === 'recovery') await renderRecovery(dateStr);
     else if (view === 'sleep') await renderSleep(dateStr);
     else if (view === 'strain') await renderStrain(dateStr);
     else if (view === 'health') renderHealth(dateStr);
