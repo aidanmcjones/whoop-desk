@@ -51,7 +51,6 @@ if (!gotLock) {
 
   let mainWindow = null;
   let tray = null;
-  let journalStore = null;
   let lastDashboardForTray = null;
   let refreshInFlight = null;
   let autoRefreshTimer = null;
@@ -70,9 +69,6 @@ if (!gotLock) {
   }
   async function loadAnalytics() {
     return import('./src/analytics.mjs');
-  }
-  async function loadJournalModule() {
-    return import('./src/journal.mjs');
   }
   async function loadCoach() {
     return import('./src/coach.mjs');
@@ -104,7 +100,7 @@ if (!gotLock) {
     launchAtLogin: false,
     notificationsEnabled: true,
     morningHour: 8,
-    autoRefreshMins: 15,
+    autoRefreshMins: 10,
     // Optional. When blank, the coach uses the signed-in `claude` CLI
     // (the user's own Anthropic account via OAuth).
     anthropicApiKey: '',
@@ -451,7 +447,6 @@ if (!gotLock) {
     }
 
     const { recovery, sleep, cycles } = data;
-    const journalEntries = journalStore ? await journalStore.listEntries({}) : [];
 
     const deviations = {
       hrv: analyticsMod.deviation(recovery, 'hrv', { days }),
@@ -471,7 +466,6 @@ if (!gotLock) {
       sleepDebt: analyticsMod.sleepDebtSeries(sleep),
       anomaly: analyticsMod.anomaly({ recovery, sleep }, { days }),
       compare7v7: analyticsMod.periodCompare({ recovery, sleep, cycles }, { aDays: 7, bDays: 7 }),
-      insights: analyticsMod.correlate(journalEntries, recovery),
     };
   }
 
@@ -489,9 +483,8 @@ if (!gotLock) {
 
     const full = await historyMod.getHistory({ days: 0 });
     const recent = await historyMod.getHistory({ days: 14 });
-    const journalEntries = journalStore ? await journalStore.listEntries({ days: 14 }) : [];
 
-    return contextMod.buildCoachContext({ full, recent, analytics: analyticsMod, journalEntries });
+    return contextMod.buildCoachContext({ full, recent, analytics: analyticsMod });
   }
 
   // -----------------------------------------------------------------------
@@ -534,51 +527,6 @@ if (!gotLock) {
     }
   });
 
-  ipcMain.handle('whoop:getJournal', async (event, opts) => {
-    try {
-      if (!journalStore) throw new Error('Journal store not initialized yet');
-      return await journalStore.listEntries(opts || {});
-    } catch (err) {
-      return { error: String(err) };
-    }
-  });
-
-  ipcMain.handle('whoop:addJournalEntry', async (event, entry) => {
-    try {
-      if (!journalStore) throw new Error('Journal store not initialized yet');
-      return await journalStore.addEntry(entry || {});
-    } catch (err) {
-      return { error: String(err) };
-    }
-  });
-
-  ipcMain.handle('whoop:updateJournalEntry', async (event, id, patch) => {
-    try {
-      if (!journalStore) throw new Error('Journal store not initialized yet');
-      return await journalStore.updateEntry(id, patch || {});
-    } catch (err) {
-      return { error: String(err) };
-    }
-  });
-
-  ipcMain.handle('whoop:deleteJournalEntry', async (event, id) => {
-    try {
-      if (!journalStore) throw new Error('Journal store not initialized yet');
-      return await journalStore.removeEntry(id);
-    } catch (err) {
-      return { error: String(err) };
-    }
-  });
-
-  ipcMain.handle('whoop:journalTags', async () => {
-    try {
-      const journalMod = await loadJournalModule();
-      return journalMod.SUGGESTED_TAGS;
-    } catch (err) {
-      return { error: String(err) };
-    }
-  });
-
   ipcMain.handle('whoop:coachStatus', async () => {
     try {
       const coach = await loadCoach();
@@ -607,16 +555,10 @@ if (!gotLock) {
     try {
       const exportMod = await loadExport();
       const outDir = path.join(os.homedir(), 'Downloads');
-      let records;
-      if (kind === 'journal') {
-        if (!journalStore) throw new Error('Journal store not initialized yet');
-        records = await journalStore.listEntries({});
-      } else {
-        const historyMod = await loadHistory();
-        const data = await historyMod.getHistory({ days: 0 });
-        records = data[kind];
-        if (!records) throw new Error(`Unknown export kind: "${kind}"`);
-      }
+      const historyMod = await loadHistory();
+      const data = await historyMod.getHistory({ days: 0 });
+      const records = data[kind];
+      if (!records) throw new Error(`Unknown export kind: "${kind}"`);
       return await exportMod.exportCsv({ kind, records, outDir });
     } catch (err) {
       return { error: String(err) };
@@ -673,17 +615,6 @@ if (!gotLock) {
       const result = await fetchBackfillStatus();
       if (result && result.error) throw new Error(result.error);
       if (typeof result.running !== 'boolean') throw new Error('missing running flag');
-    });
-
-    await check('journal add/list/delete round-trip', async () => {
-      const journalMod = await loadJournalModule();
-      const tmpDir = path.join(os.tmpdir(), `whoop-desk-ipc-check-journal-${process.pid}-${Date.now()}`);
-      const tmpJournal = await journalMod.initJournal({ dataDir: tmpDir });
-      const entry = await tmpJournal.addEntry({ date: '2026-01-01', tags: ['stress'], note: 'ipc-check' });
-      const listed = await tmpJournal.listEntries({});
-      if (!listed.find((e) => e.id === entry.id)) throw new Error('added entry not found in listEntries');
-      const removed = await tmpJournal.removeEntry(entry.id);
-      if (!removed) throw new Error('removeEntry returned false');
     });
 
     await check('exportCsv', async () => {
@@ -791,8 +722,6 @@ if (!gotLock) {
     const dataDir = app.getPath('userData');
     const historyMod = await loadHistory();
     historyMod.initHistory({ dataDir });
-    const journalMod = await loadJournalModule();
-    journalStore = await journalMod.initJournal({ dataDir });
 
     if (isIpcCheck) {
       await runIpcCheck();

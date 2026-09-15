@@ -17,7 +17,6 @@
 //   - acwr(cycles) -> { acute7, chronic28, ratio, zone } | { insufficient: true }
 //   - sleepDebtSeries(sleep) -> [{ date, debtMin, cumulative7dMin }]
 //   - anomaly({ recovery, sleep }, { days = 28 } = {}) -> { flagged, score, reasons }
-//   - correlate(journalEntries, recovery) -> [{ tag, n, avgNextDayRecoveryDelta, direction }]
 //   - periodCompare({ recovery, sleep, cycles }, { aDays = 7, bDays = 7 } = {}) ->
 //       { recovery, hrv, rhr, sleepHours, strain } each { a, b, delta, pctDelta }
 
@@ -270,53 +269,6 @@ export function anomaly({ recovery = [], sleep = [] } = {}, { days = 28 } = {}) 
 // -----------------------------------------------------------------------
 // correlate
 // -----------------------------------------------------------------------
-export function correlate(journalEntries, recovery) {
-  const recoveryByDate = new Map();
-  for (const r of recovery || []) {
-    if (r && r.date && isNum(r.score)) recoveryByDate.set(r.date, r.score);
-  }
-
-  // Group tags by distinct journal date (a day may have multiple entries).
-  const tagsByDate = new Map();
-  for (const e of journalEntries || []) {
-    if (!e || !e.date) continue;
-    const set = tagsByDate.get(e.date) || new Set();
-    for (const t of e.tags || []) set.add(t);
-    tagsByDate.set(e.date, set);
-  }
-
-  const allTags = new Set();
-  for (const set of tagsByDate.values()) for (const t of set) allTags.add(t);
-
-  const results = [];
-  for (const tag of allTags) {
-    const taggedVals = [];
-    const untaggedVals = [];
-    for (const [date, tags] of tagsByDate.entries()) {
-      const nextScore = recoveryByDate.get(addDays(date, 1));
-      if (!isNum(nextScore)) continue;
-      if (tags.has(tag)) taggedVals.push(nextScore);
-      else untaggedVals.push(nextScore);
-    }
-
-    const n = taggedVals.length;
-    if (n < 3 || !untaggedVals.length) continue;
-
-    const taggedMean = avg(taggedVals);
-    const untaggedMean = avg(untaggedVals);
-    const delta = round(taggedMean - untaggedMean, 2);
-
-    results.push({
-      tag,
-      n,
-      avgNextDayRecoveryDelta: delta,
-      direction: delta > 0 ? 'positive' : delta < 0 ? 'negative' : 'neutral',
-    });
-  }
-
-  results.sort((a, b) => Math.abs(b.avgNextDayRecoveryDelta) - Math.abs(a.avgNextDayRecoveryDelta));
-  return results;
-}
 
 // -----------------------------------------------------------------------
 // periodCompare

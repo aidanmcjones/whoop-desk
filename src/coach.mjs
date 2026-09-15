@@ -48,7 +48,7 @@ How to read it:
 - cycles[]: dayStrain (0-21 scale: <10 light, 10-14 moderate, 14-18 high, 18+ all out), calories, avgHr, maxHr.
 - workouts[]: per-activity strain, duration, HR, calories, minutes in HR zones z1-z5.
 - baselines28d: 28-day mean and sd for each key metric. "Your usual" = the mean. Meaningfully different = roughly one sd or more away.
-- sleepDebt7d, acwr (acute:chronic workload ratio; <0.8 undertraining, 0.8-1.3 sweet spot, >1.5 spike), strainTarget (today's recommended strain range from this morning's recovery), journal (user-logged tags/notes).
+- sleepDebt7d, acwr (acute:chronic workload ratio; <0.8 undertraining, 0.8-1.3 sweet spot, >1.5 spike), strainTarget (today's recommended strain range from this morning's recovery).
 
 ## How to answer
 - Lead with the answer in one sentence. Then the supporting numbers. No preamble like "Here's the breakdown".
@@ -75,9 +75,6 @@ function isLoopbackUrl(value) {
   }
 }
 
-// Returns a copy of process.env with any agent-session broker credentials
-// removed, so nested SDK/CLI calls hit the real Anthropic API with the
-// user's own credentials.
 // Directories where the claude CLI is commonly installed. A GUI app launched
 // from the Dock/Finder only gets /usr/bin:/bin:/usr/sbin:/sbin, so these are
 // appended to PATH for every child process and searched directly.
@@ -95,6 +92,9 @@ function augmentedPath(current) {
   return parts.join(path.delimiter);
 }
 
+// Returns a copy of process.env with any agent-session broker credentials
+// removed (and the CLI dirs on PATH), so nested SDK/CLI calls hit the real
+// Anthropic API with the user's own credentials.
 export function cleanEnv(base = process.env) {
   const env = { ...base };
   env.PATH = augmentedPath(env.PATH);

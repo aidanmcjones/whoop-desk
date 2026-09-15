@@ -1067,7 +1067,7 @@
     {
       "date": "2026-09-08",
       "sport": "Swimming",
-      "emoji": "🏊",
+      "emoji": "\ud83c\udfca",
       "start": "2026-09-08T19:02:00.000Z",
       "durationMin": 33,
       "strain": 9.4,
@@ -1085,7 +1085,7 @@
     {
       "date": "2026-09-07",
       "sport": "Yoga",
-      "emoji": "🧘",
+      "emoji": "\ud83e\uddd8",
       "start": "2026-09-07T13:19:00.000Z",
       "durationMin": 48,
       "strain": 4.1,
@@ -1103,7 +1103,7 @@
     {
       "date": "2026-09-05",
       "sport": "Weightlifting",
-      "emoji": "🏋️",
+      "emoji": "\ud83c\udfcb\ufe0f",
       "start": "2026-09-06T00:40:00.000Z",
       "durationMin": 42,
       "strain": 15.6,
@@ -1121,7 +1121,7 @@
     {
       "date": "2026-09-04",
       "sport": "Running",
-      "emoji": "🏃",
+      "emoji": "\ud83c\udfc3",
       "start": "2026-09-04T16:38:00.000Z",
       "durationMin": 68,
       "strain": 5.4,
@@ -1139,7 +1139,7 @@
     {
       "date": "2026-09-03",
       "sport": "Weightlifting",
-      "emoji": "🏋️",
+      "emoji": "\ud83c\udfcb\ufe0f",
       "start": "2026-09-03T15:14:00.000Z",
       "durationMin": 29,
       "strain": 7.4,
@@ -1157,7 +1157,7 @@
     {
       "date": "2026-09-02",
       "sport": "Cycling",
-      "emoji": "🚴",
+      "emoji": "\ud83d\udeb4",
       "start": "2026-09-02T17:21:00.000Z",
       "durationMin": 57,
       "strain": 12.4,
@@ -1175,7 +1175,7 @@
     {
       "date": "2026-08-31",
       "sport": "Weightlifting",
-      "emoji": "🏋️",
+      "emoji": "\ud83c\udfcb\ufe0f",
       "start": "2026-08-31T15:42:00.000Z",
       "durationMin": 56,
       "strain": 4.2,
@@ -1193,7 +1193,7 @@
     {
       "date": "2026-08-30",
       "sport": "HIIT",
-      "emoji": "🔥",
+      "emoji": "\ud83d\udd25",
       "start": "2026-08-30T13:20:00.000Z",
       "durationMin": 51,
       "strain": 16.2,
@@ -1211,7 +1211,7 @@
     {
       "date": "2026-08-30",
       "sport": "Walking",
-      "emoji": "🚶",
+      "emoji": "\ud83d\udeb6",
       "start": "2026-08-30T16:26:00.000Z",
       "durationMin": 19,
       "strain": 17.8,
@@ -1229,7 +1229,7 @@
     {
       "date": "2026-08-28",
       "sport": "HIIT",
-      "emoji": "🔥",
+      "emoji": "\ud83d\udd25",
       "start": "2026-08-28T16:50:00.000Z",
       "durationMin": 65,
       "strain": 7.8,
@@ -1247,7 +1247,7 @@
     {
       "date": "2026-08-27",
       "sport": "Running",
-      "emoji": "🏃",
+      "emoji": "\ud83c\udfc3",
       "start": "2026-08-28T00:14:00.000Z",
       "durationMin": 65,
       "strain": 7.2,
@@ -1265,7 +1265,7 @@
     {
       "date": "2026-08-27",
       "sport": "Cycling",
-      "emoji": "🚴",
+      "emoji": "\ud83d\udeb4",
       "start": "2026-08-27T20:44:00.000Z",
       "durationMin": 49,
       "strain": 15.7,
@@ -1283,7 +1283,7 @@
     {
       "date": "2026-08-26",
       "sport": "Swimming",
-      "emoji": "🏊",
+      "emoji": "\ud83c\udfca",
       "start": "2026-08-26T16:21:00.000Z",
       "durationMin": 93,
       "strain": 12.2,
@@ -1301,7 +1301,7 @@
     {
       "date": "2026-08-26",
       "sport": "Walking",
-      "emoji": "🚶",
+      "emoji": "\ud83d\udeb6",
       "start": "2026-08-26T12:36:00.000Z",
       "durationMin": 23,
       "strain": 12.7,
@@ -1319,7 +1319,7 @@
     {
       "date": "2026-08-25",
       "sport": "HIIT",
-      "emoji": "🔥",
+      "emoji": "\ud83d\udd25",
       "start": "2026-08-25T18:53:00.000Z",
       "durationMin": 58,
       "strain": 6.4,
@@ -1337,7 +1337,7 @@
     {
       "date": "2026-08-24",
       "sport": "Swimming",
-      "emoji": "🏊",
+      "emoji": "\ud83c\udfca",
       "start": "2026-08-24T13:55:00.000Z",
       "durationMin": 47,
       "strain": 16.5,
@@ -1355,7 +1355,7 @@
     {
       "date": "2026-08-22",
       "sport": "Swimming",
-      "emoji": "🏊",
+      "emoji": "\ud83c\udfca",
       "start": "2026-08-22T18:07:00.000Z",
       "durationMin": 72,
       "strain": 4.7,
@@ -1373,7 +1373,7 @@
     {
       "date": "2026-08-21",
       "sport": "Yoga",
-      "emoji": "🧘",
+      "emoji": "\ud83e\uddd8",
       "start": "2026-08-21T18:45:00.000Z",
       "durationMin": 62,
       "strain": 15.3,
@@ -1391,7 +1391,7 @@
     {
       "date": "2026-08-20",
       "sport": "Walking",
-      "emoji": "🚶",
+      "emoji": "\ud83d\udeb6",
       "start": "2026-08-20T16:32:00.000Z",
       "durationMin": 40,
       "strain": 14.5,
@@ -1409,7 +1409,7 @@
     {
       "date": "2026-08-16",
       "sport": "Running",
-      "emoji": "🏃",
+      "emoji": "\ud83c\udfc3",
       "start": "2026-08-16T11:25:00.000Z",
       "durationMin": 75,
       "strain": 13.6,
@@ -1427,7 +1427,7 @@
     {
       "date": "2026-08-15",
       "sport": "Weightlifting",
-      "emoji": "🏋️",
+      "emoji": "\ud83c\udfcb\ufe0f",
       "start": "2026-08-15T18:09:00.000Z",
       "durationMin": 72,
       "strain": 8,
@@ -1445,7 +1445,7 @@
     {
       "date": "2026-08-14",
       "sport": "Running",
-      "emoji": "🏃",
+      "emoji": "\ud83c\udfc3",
       "start": "2026-08-14T14:16:00.000Z",
       "durationMin": 53,
       "strain": 14.5,
@@ -1463,7 +1463,7 @@
     {
       "date": "2026-08-13",
       "sport": "Cycling",
-      "emoji": "🚴",
+      "emoji": "\ud83d\udeb4",
       "start": "2026-08-13T11:51:00.000Z",
       "durationMin": 73,
       "strain": 10.9,
@@ -1481,7 +1481,7 @@
     {
       "date": "2026-08-12",
       "sport": "HIIT",
-      "emoji": "🔥",
+      "emoji": "\ud83d\udd25",
       "start": "2026-08-12T11:41:00.000Z",
       "durationMin": 64,
       "strain": 10.8,
@@ -1497,89 +1497,11 @@
       }
     }
   ],
-  "journal": [
-    {
-      "id": "seed-1",
-      "date": "2026-09-09",
-      "tags": [
-        "late-screen",
-        "stress"
-      ],
-      "note": "Rough day at work, scrolled in bed past midnight.",
-      "createdAt": "2026-09-09T23:58:00.000Z"
-    },
-    {
-      "id": "seed-2",
-      "date": "2026-09-08",
-      "tags": [
-        "sauna"
-      ],
-      "note": "Sauna session after swim, felt great.",
-      "createdAt": "2026-09-08T21:10:00.000Z"
-    },
-    {
-      "id": "seed-3",
-      "date": "2026-09-06",
-      "tags": [
-        "alcohol",
-        "late-meal"
-      ],
-      "note": "Dinner out with friends, two glasses of wine.",
-      "createdAt": "2026-09-06T22:40:00.000Z"
-    },
-    {
-      "id": "seed-4",
-      "date": "2026-09-04",
-      "tags": [
-        "travel"
-      ],
-      "note": "Flew back from Denver, short night.",
-      "createdAt": "2026-09-04T20:05:00.000Z"
-    },
-    {
-      "id": "seed-5",
-      "date": "2026-09-01",
-      "tags": [
-        "early-workout",
-        "caffeine-late"
-      ],
-      "note": "6am lift, coffee at 4pm which was probably a mistake.",
-      "createdAt": "2026-09-01T21:30:00.000Z"
-    },
-    {
-      "id": "seed-6",
-      "date": "2026-08-29",
-      "tags": [
-        "reading-before-bed"
-      ],
-      "note": "Read instead of screens, fell asleep fast.",
-      "createdAt": "2026-08-29T22:15:00.000Z"
-    },
-    {
-      "id": "seed-7",
-      "date": "2026-08-26",
-      "tags": [
-        "sick"
-      ],
-      "note": "Scratchy throat, took it easy.",
-      "createdAt": "2026-08-26T19:00:00.000Z"
-    },
-    {
-      "id": "seed-8",
-      "date": "2026-08-21",
-      "tags": [
-        "stress",
-        "caffeine-late"
-      ],
-      "note": "Big deadline, second coffee at 3pm.",
-      "createdAt": "2026-08-21T20:50:00.000Z"
-    }
-  ],
   "settings": {
     "launchAtLogin": false,
     "notificationsEnabled": true,
     "morningHour": 7,
-    "autoRefreshMins": 15
+    "autoRefreshMins": 10
   },
   "backfillStatus": {
     "backfillComplete": true,

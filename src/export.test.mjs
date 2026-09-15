@@ -143,21 +143,6 @@ test('exportCsv: flattens sleep stages', async () => {
   }
 });
 
-test('exportCsv: journal preset joins tags with ";"', async () => {
-  const outDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whoop-export-test-'));
-  try {
-    const records = [
-      { id: 'abc123', date: '2026-09-10', tags: ['sleep', 'mood'], note: 'felt good', createdAt: '2026-09-10T12:00:00.000Z' },
-    ];
-    const result = await exportCsv({ kind: 'journal', records, outDir });
-    const written = await fsp.readFile(result.path, 'utf8');
-    assert.match(written, /^date,tags,note,createdAt\n/);
-    assert.match(written, /2026-09-10,sleep;mood,felt good,2026-09-10T12:00:00\.000Z/);
-  } finally {
-    await fsp.rm(outDir, { recursive: true, force: true });
-  }
-});
-
 test('exportCsv: workouts preset uses z1Min..z5Min zone keys (no zone0)', async () => {
   const outDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'whoop-export-test-'));
   try {

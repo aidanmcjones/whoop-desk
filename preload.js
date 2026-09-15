@@ -9,12 +9,6 @@ contextBridge.exposeInMainWorld('whoop', {
 
   getAnalytics: (opts) => ipcRenderer.invoke('whoop:getAnalytics', opts),
 
-  getJournal: (opts) => ipcRenderer.invoke('whoop:getJournal', opts),
-  addJournalEntry: (entry) => ipcRenderer.invoke('whoop:addJournalEntry', entry),
-  updateJournalEntry: (id, patch) => ipcRenderer.invoke('whoop:updateJournalEntry', id, patch),
-  deleteJournalEntry: (id) => ipcRenderer.invoke('whoop:deleteJournalEntry', id),
-  journalTags: () => ipcRenderer.invoke('whoop:journalTags'),
-
   coachStatus: () => ipcRenderer.invoke('whoop:coachStatus'),
   askCoach: (payload) => ipcRenderer.invoke('whoop:askCoach', payload),
 

@@ -90,13 +90,6 @@
             </svg>
             <span>Trends</span>
           </button>
-          <button id="nav-journal" class="nav-item" type="button" data-view="journal">
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
-              <rect x="3.5" y="2.5" width="13" height="15" rx="2" stroke="currentColor" stroke-width="1.7" />
-              <path d="M6.5 6.5h7M6.5 10h7M6.5 13.5h4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-            </svg>
-            <span>Journal</span>
-          </button>
           <button id="nav-coach" class="nav-item" type="button" data-view="coach">
             <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <path d="M3.2 5.6a2.2 2.2 0 0 1 2.2-2.2h9.2a2.2 2.2 0 0 1 2.2 2.2v6a2.2 2.2 0 0 1-2.2 2.2H9.6l-3.8 3v-3H5.4a2.2 2.2 0 0 1-2.2-2.2Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" />
@@ -109,11 +102,6 @@
         </nav>
 
         <div class="sidebar-foot">
-          <div class="unavailable-card">
-            <p class="micro-label">Not available</p>
-            <p class="unavailable-body">Community, Stress &amp; WHOOP Age have no public WHOOP API.</p>
-          </div>
-          <p id="backfill-indicator" class="backfill-indicator" hidden></p>
           <button id="refresh-btn" class="refresh-btn" type="button" hidden>
             <svg width="17" height="17" viewBox="0 0 20 20" fill="none" aria-hidden="true">
               <path d="M16.5 10a6.5 6.5 0 1 1-1.94-4.64" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
@@ -223,16 +211,9 @@
                     <button class="export-btn" type="button" data-kind="sleep">Sleep</button>
                     <button class="export-btn" type="button" data-kind="cycles">Cycles</button>
                     <button class="export-btn" type="button" data-kind="workouts">Workouts</button>
-                    <button class="export-btn" type="button" data-kind="journal">Journal</button>
                   </div>
                 </div>
               </div>
-            </section>
-
-            <section id="view-journal" class="view grid-12" hidden>
-              <div id="journal-add-card" class="card span-12"></div>
-              <div id="journal-insights-card" class="card span-4"></div>
-              <div id="journal-entries-card" class="card span-8"></div>
             </section>
 
             <section id="view-coach" class="view grid-12" hidden>
