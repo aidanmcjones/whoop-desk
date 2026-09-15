@@ -2178,3 +2178,16 @@ button {
     width: 100%;
   }
 }
+
+/* recovery view: daily-outlook body copy */
+.outlook-copy {
+  margin: 2px 0 16px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-near);
+}
+
+.outlook-copy strong {
+  color: #ffffff;
+  font-weight: 700;
+}
