@@ -883,8 +883,18 @@
     return {
       points: [], activities: [], cycleAvgHr: null, cycleMaxHr: null,
       latestBpm: null, latestAt: null, rangeBpm: null,
-      sampleCount: 0, lastSampleAt: null, warmingUp: true, sampleEveryMins: 2,
+      sampleCount: 0, lastSampleAt: null, warmingUp: true,
+      sampleEverySeconds: 30, model: null,
+      live: false, liveSecondsLeft: 0, liveMaxMinutes: 20,
     };
+  }
+
+  function mockSetLiveHr(payload) {
+    var base = mockGetHeartRate();
+    base.live = !!(payload && payload.on);
+    base.sampleEverySeconds = base.live ? 2 : 30;
+    base.liveSecondsLeft = base.live ? 20 * 60 : 0;
+    return base;
   }
 
   function mockCoachStatus() {
@@ -1802,11 +1812,13 @@
     return HR_ZONE_BANDS[0];
   }
 
-  function hrClock(iso) {
+  function hrClock(iso, withSeconds) {
     if (!iso) return '--';
     var d = new Date(iso);
     if (isNaN(d)) return '--';
-    return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    var opts = { hour: 'numeric', minute: '2-digit' };
+    if (withSeconds) opts.second = '2-digit';
+    return d.toLocaleTimeString(undefined, opts);
   }
 
   function renderHeartRate(hr) {
@@ -1826,14 +1838,29 @@
     var zone = hrZoneFor(latest, maxHr);
     var liveColor = isNum(latest) ? zone.color : C.label;
 
-    var noteHTML = isNum(hr.sampleEveryMins)
-      ? 'Sampled every <strong>' + fmtInt(hr.sampleEveryMins) + ' min</strong>'
+    var noteHTML = isNum(hr.sampleEverySeconds)
+      ? 'Every <strong>' + fmtInt(hr.sampleEverySeconds) + 's</strong>' +
+        (hr.model && isNum(hr.model.rmse)
+          ? ' &middot; estimate &plusmn;<strong>' + fmt(hr.model.rmse, 0) + ' bpm</strong>'
+          : '')
       : '';
 
+    var live = !!hr.live;
+    var liveBtn =
+      '<button type="button" id="hr-live-btn" class="hr-live-btn' + (live ? ' on' : '') +
+      '" aria-pressed="' + live + '">' +
+      '<span class="hr-live-btn-dot" aria-hidden="true"></span>' +
+      (live
+        ? 'Live &middot; ' + fmtInt(Math.ceil((hr.liveSecondsLeft || 0) / 60)) + 'm left'
+        : 'Check heart rate') +
+      '</button>';
+
     var head =
-      '<div class="card-head"><span class="micro-label">Heart Rate &mdash; today</span>' +
+      '<div class="card-head hr-head"><span class="micro-label">Heart Rate &mdash; today</span>' +
+      '<span class="hr-head-right">' +
       (noteHTML ? '<span class="card-head-note">' + noteHTML + '</span>' : '') +
-      '</div>';
+      liveBtn +
+      '</span></div>';
 
     var readout =
       '<div class="hr-readout">' +
@@ -1844,14 +1871,14 @@
       '<span class="unit">bpm</span></span>' +
       '<span class="hr-live-meta">' +
       (isNum(latest)
-        ? zone.label + ' &middot; ' + hrClock(hr.latestAt)
+        ? 'est. &middot; ' + zone.label + ' &middot; ' + hrClock(hr.latestAt, live)
         : 'waiting for the first reading') +
       '</span>' +
       '</div>' +
       '<div class="hr-stats">' +
-      '<div class="hr-stat"><span class="hr-stat-label">Day avg</span>' +
+      '<div class="hr-stat"><span class="hr-stat-label">Day avg &middot; measured</span>' +
       '<span class="hr-stat-value">' + fmt(hr.cycleAvgHr) + '</span></div>' +
-      '<div class="hr-stat"><span class="hr-stat-label">Day max</span>' +
+      '<div class="hr-stat"><span class="hr-stat-label">Day max &middot; measured</span>' +
       '<span class="hr-stat-value" style="color:' + C.red + '">' + fmt(hr.cycleMaxHr) + '</span></div>' +
       '<div class="hr-stat"><span class="hr-stat-label">Today&rsquo;s range</span>' +
       '<span class="hr-stat-value">' +
@@ -1878,9 +1905,12 @@
       body =
         '<div class="hr-warmup">' +
         '<p class="hr-warmup-title">Building today&rsquo;s line</p>' +
-        '<p class="hr-warmup-body">WHOOP&rsquo;s API publishes no live heart-rate feed, so Whoop+ reads your ' +
-        'in-progress day every ' + fmtInt(hr.sampleEveryMins || 2) + ' minutes and derives the beats between ' +
-        'readings. The chart needs two readings to draw its first segment.</p>' +
+        '<p class="hr-warmup-body">WHOOP&rsquo;s API publishes no live heart-rate feed. Whoop+ reads your ' +
+        'in-progress day every ' + fmtInt(hr.sampleEverySeconds || 30) + ' second' +
+        (hr.sampleEverySeconds === 1 ? '' : 's') + ' and estimates heart rate ' +
+        'from the energy burned between readings, using a model fitted to your own workout history' +
+        (hr.model && isNum(hr.model.n) ? ' (' + fmtInt(hr.model.n) + ' sessions, &plusmn;' + fmt(hr.model.rmse, 0) + ' bpm)' : '') +
+        '. The line starts once two readings with new data have arrived.</p>' +
         '<p class="hr-warmup-count">' + fmtInt(hr.sampleCount) + ' reading' +
         (hr.sampleCount === 1 ? '' : 's') + ' so far' +
         (hr.lastSampleAt ? ', last at ' + hrClock(hr.lastSampleAt) : '') + '</p>' +
@@ -1899,7 +1929,20 @@
         '</div>'
       : '';
 
-    el.innerHTML = head + readout + body + acts;
+    var liveNote = live
+      ? '<p class="hr-foot">Live: polling every ' + fmtInt(hr.sampleEverySeconds) +
+        's, stopping automatically after ' + fmtInt(hr.liveMaxMinutes) +
+        ' minutes. WHOOP still publishes in batches, so this shortens the delay ' +
+        'before a new batch appears rather than adding detail between batches.</p>'
+      : '';
+
+    var foot = (pts.length >= 2 && hr.model)
+      ? '<p class="hr-foot">Line is estimated from energy burn, fitted to ' + fmtInt(hr.model.n) +
+        ' of your own sessions (R&sup2; ' + fmt(hr.model.r2, 2) + ', typical error &plusmn;' +
+        fmt(hr.model.rmse, 0) + ' bpm). Day average, day max and activity figures are measured by WHOOP.</p>'
+      : '';
+
+    el.innerHTML = head + readout + body + acts + liveNote + foot;
     fillCharts(el);
   }
 
@@ -2373,6 +2416,11 @@
 
   async function setActiveView(view) {
     if (!view) return;
+    // Live polling is only meaningful while the card is on screen.
+    if (state.activeView === 'health' && view !== 'health' &&
+        state.heartRate && state.heartRate.live) {
+      callApi('setLiveHr', [{ on: false }], mockSetLiveHr);
+    }
     state.activeView = view;
     document.querySelectorAll('.view').forEach(function (v) {
       v.hidden = v.id !== 'view-' + view;
@@ -2536,6 +2584,24 @@
       var banner = document.getElementById('anomaly-banner');
       if (banner) { banner.hidden = true; banner.innerHTML = ''; }
     });
+
+    /* live heart-rate toggle */
+    var viewHealth = document.getElementById('view-health');
+    if (viewHealth) {
+      viewHealth.addEventListener('click', async function (e) {
+        var btn = e.target.closest('#hr-live-btn');
+        if (!btn) return;
+        var turningOn = !btn.classList.contains('on');
+        btn.disabled = true;
+        var res = await callApi('setLiveHr', [{ on: turningOn }], mockSetLiveHr);
+        if (res && !res.error) {
+          state.heartRate = res;
+          renderHeartRate(res);
+        } else {
+          btn.disabled = false;
+        }
+      });
+    }
 
     /* settings panel */
     var settingsBtn = document.getElementById('settings-btn');

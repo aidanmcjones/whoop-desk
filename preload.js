@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('whoop', {
   getHistory: (opts) => ipcRenderer.invoke('whoop:getHistory', opts),
   getBackfillStatus: () => ipcRenderer.invoke('whoop:getBackfillStatus'),
   getHeartRate: () => ipcRenderer.invoke('whoop:getHeartRate'),
+  setLiveHr: (payload) => ipcRenderer.invoke('whoop:setLiveHr', payload),
 
   getAnalytics: (opts) => ipcRenderer.invoke('whoop:getAnalytics', opts),
 
