@@ -2168,3 +2168,127 @@ button {
 .hr-ble-error {
   color: var(--amber);
 }
+
+/* workout panel */
+.wo-panel {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.wo-idle {
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.wo-stats {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  flex-wrap: wrap;
+}
+
+.wo-start {
+  border-color: rgba(59, 130, 246, 0.55);
+  background: rgba(59, 130, 246, 0.14);
+  color: #d8e6ff;
+}
+
+.wo-stop {
+  border-color: rgba(255, 77, 77, 0.55);
+  background: rgba(255, 77, 77, 0.14);
+  color: #ffd9d9;
+  margin-left: auto;
+}
+
+.wo-zonebar {
+  height: 10px;
+}
+
+.wo-last b {
+  color: var(--text-near);
+}
+
+.hr-strap-info {
+  margin-top: 10px;
+}
+
+/* guided breathing overlay */
+#breath-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 8, 12, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+
+#breath-overlay[hidden] {
+  display: none;
+}
+
+.breath-panel {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 30px 40px 26px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+}
+
+.breath-circle-wrap {
+  position: relative;
+  width: 190px;
+  height: 190px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.breath-circle {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(143, 166, 196, 0.35), rgba(143, 166, 196, 0.08));
+  border: 2px solid var(--sleep);
+  animation: breath-cycle 11s ease-in-out infinite;
+}
+
+@keyframes breath-cycle {
+  0%, 100% { transform: scale(0.62); }
+  50% { transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .breath-circle { animation: none; transform: scale(0.8); }
+}
+
+.breath-phase {
+  position: relative;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-near);
+}
+
+.breath-live {
+  margin: 0;
+  font-size: 15px;
+  color: var(--label);
+}
+
+.breath-live b {
+  font-size: 22px;
+  color: var(--text);
+}

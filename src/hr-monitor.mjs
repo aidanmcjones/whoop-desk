@@ -69,6 +69,83 @@ function localDateOf(iso, timeZone) {
   }
 }
 
+
+// -----------------------------------------------------------------------
+// Pure helpers shared with the renderer (renderer keeps tiny copies since
+// it cannot import ESM; these exported versions are the tested truth).
+// -----------------------------------------------------------------------
+
+// RMSSD over a window of RR intervals in milliseconds. Needs at least 4
+// plausible beats; artifacts outside 250-2500 ms are dropped pairwise.
+export function rmssd(rrMs) {
+  const diffs = [];
+  for (let i = 1; i < (rrMs || []).length; i++) {
+    const a = rrMs[i - 1];
+    const b = rrMs[i];
+    if (a > 250 && a < 2500 && b > 250 && b < 2500) diffs.push(b - a);
+  }
+  if (diffs.length < 3) return null;
+  const meanSq = diffs.reduce((s, d) => s + d * d, 0) / diffs.length;
+  return Math.round(Math.sqrt(meanSq));
+}
+
+// Inverse of the personal energy model: bpm -> kJ/min. Used to turn a live
+// measured heart rate into a calorie burn rate.
+export function invertEnergyModel(bpm, model) {
+  if (!model || !Number.isFinite(bpm) || !Number.isFinite(model.intercept) || !model.slope) return null;
+  const x = (bpm - model.intercept) / model.slope;
+  if (!(x > 0)) return 0;
+  return x * x;
+}
+
+// Rough WHOOP-style strain from time in HR zones. Zone minutes are weighted
+// exponentially (harder zones count much more) and squashed onto the 0-21
+// scale. This is an approximation and is always labelled as such.
+export function approxStrain(zoneSeconds) {
+  const w = { z1: 1, z2: 2, z3: 4, z4: 8, z5: 16 };
+  let raw = 0;
+  for (const k of Object.keys(w)) raw += ((zoneSeconds && zoneSeconds[k]) || 0) / 60 * w[k];
+  return Number((21 * (1 - Math.exp(-raw / 200))).toFixed(1));
+}
+
+// Average measured beats into fixed buckets so a 1 Hz stream can sit on the
+// day chart without swamping it.
+export function bucketMeasured(measured, bucketSec = 120) {
+  const buckets = new Map();
+  for (const m of measured || []) {
+    const ms = new Date(m.t).getTime();
+    if (!Number.isFinite(ms) || !Number.isFinite(m.bpm)) continue;
+    const key = Math.floor(ms / (bucketSec * 1000));
+    const b = buckets.get(key) || { sum: 0, n: 0, key };
+    b.sum += m.bpm;
+    b.n += 1;
+    buckets.set(key, b);
+  }
+  return [...buckets.values()]
+    .sort((a, b) => a.key - b.key)
+    .map((b) => ({
+      t: new Date((b.key + 1) * bucketSec * 1000).toISOString(),
+      bpm: Math.round(b.sum / b.n),
+      source: 'measured',
+    }));
+}
+
+// Day chart series: measured buckets are ground truth; estimated intervals
+// fill only the stretches no strap session covered.
+export function mergeDayPoints(estimated, measuredBuckets) {
+  const pts = (measuredBuckets || []).map((m) => ({ t: m.t, bpm: m.bpm, source: 'measured' }));
+  for (const e of estimated || []) {
+    const eMs = new Date(e.t).getTime();
+    const windowMs = Math.max(2, e.spanMin || 2) * 60000;
+    const covered = (measuredBuckets || []).some(
+      (m) => Math.abs(new Date(m.t).getTime() - eMs) < windowMs
+    );
+    if (!covered) pts.push({ t: e.t, bpm: e.bpm, source: 'estimated' });
+  }
+  pts.sort((a, b) => new Date(a.t) - new Date(b.t));
+  return pts;
+}
+
 // -----------------------------------------------------------------------
 // Personal energy -> heart-rate model
 // -----------------------------------------------------------------------
@@ -190,7 +267,7 @@ export function workoutPoints(workouts, date) {
     }));
 }
 
-export function buildSeries({ samples, measured, cycle, workouts, date, timeZone, model }) {
+export function buildSeries({ samples, measured, sessions, strapInfo, cycle, workouts, date, timeZone, model }) {
   const tz = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const today = date || localDateOf(new Date().toISOString(), tz);
   const todays = (samples || []).filter((s) => localDateOf(s.t, tz) === today);
@@ -226,6 +303,10 @@ export function buildSeries({ samples, measured, cycle, workouts, date, timeZone
     sampleCount: todays.length,
     lastSampleAt: newest ? newest.t : null,
     date: today,
+    dayPoints: mergeDayPoints(intervals, bucketMeasured(measuredToday)),
+    lastSession: sessions && sessions.length ? sessions[sessions.length - 1] : null,
+    sessionCount: (sessions || []).length,
+    strapInfo: strapInfo || null,
     measured: {
       count: measuredToday.length,
       latestBpm: mLatest ? mLatest.bpm : null,
@@ -236,7 +317,12 @@ export function buildSeries({ samples, measured, cycle, workouts, date, timeZone
     // Published so the UI can state the estimate's accuracy rather than
     // implying the line is measured.
     model: model
-      ? { n: model.n, r2: model.r2, rmse: model.rmse, fittedAt: model.fittedAt }
+      ? {
+          n: model.n, r2: model.r2, rmse: model.rmse, fittedAt: model.fittedAt,
+          // Coefficients are published so the renderer can invert the model
+          // for live calorie burn during a workout.
+          intercept: model.intercept, slope: model.slope,
+        }
       : null,
     warmingUp: intervals.length < 1,
   };
@@ -250,6 +336,8 @@ export async function initHrMonitor({ dataDir } = {}) {
   const filePath = path.join(dataDir, 'hr-samples.json');
   let samples = [];
   let measured = []; // BLE strap broadcast: [{ t, bpm }], truly measured
+  let sessions = []; // completed live-workout sessions, newest last
+  let strapInfo = null; // probe results: battery, firmware, rrSupported, ...
   let model = null;
   let queue = Promise.resolve();
 
@@ -258,6 +346,8 @@ export async function initHrMonitor({ dataDir } = {}) {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed?.samples)) samples = parsed.samples;
     if (Array.isArray(parsed?.measured)) measured = parsed.measured;
+    if (Array.isArray(parsed?.sessions)) sessions = parsed.sessions;
+    if (parsed?.strapInfo) strapInfo = parsed.strapInfo;
     if (parsed?.model) model = parsed.model;
   } catch (err) {
     if (err && err.code !== 'ENOENT') console.error('hr-monitor: could not read store:', err);
@@ -272,7 +362,7 @@ export async function initHrMonitor({ dataDir } = {}) {
   async function persist() {
     await fsp.mkdir(dataDir, { recursive: true });
     const tmp = path.join(dataDir, `.hr-samples.json.${process.pid}.${Date.now()}.tmp`);
-    await fsp.writeFile(tmp, JSON.stringify({ samples, measured, model }, null, 2), 'utf8');
+    await fsp.writeFile(tmp, JSON.stringify({ samples, measured, sessions, strapInfo, model }, null, 2), 'utf8');
     await fsp.rename(tmp, filePath);
   }
 
@@ -321,8 +411,37 @@ export async function initHrMonitor({ dataDir } = {}) {
       return buildSeries({
         samples: samples.slice(),
         measured: measured.slice(),
+        sessions: sessions.slice(),
+        strapInfo,
         cycle, workouts, date, timeZone, model,
       });
+    },
+
+    addSession(session) {
+      return enqueue(async () => {
+        if (!session || !session.startedAt) return { added: false };
+        sessions.push(session);
+        if (sessions.length > 50) sessions = sessions.slice(-50);
+        await persist();
+        return { added: true, count: sessions.length };
+      });
+    },
+
+    setStrapInfo(info) {
+      return enqueue(async () => {
+        if (!info || typeof info !== 'object') return { ok: false };
+        strapInfo = { ...(strapInfo || {}), ...info, updatedAt: new Date().toISOString() };
+        await persist();
+        return { ok: true, strapInfo };
+      });
+    },
+
+    listMeasured() {
+      return measured.slice();
+    },
+
+    listSessions() {
+      return sessions.slice();
     },
 
     // Batch of truly measured readings from the strap's Bluetooth heart-rate
@@ -370,5 +489,7 @@ export async function initHrMonitor({ dataDir } = {}) {
 
 export default {
   initHrMonitor, deriveIntervals, workoutPoints, buildSeries,
-  calibrationPoints, fitEnergyModel, estimateBpm, RETENTION_DAYS,
+  calibrationPoints, fitEnergyModel, estimateBpm,
+  rmssd, invertEnergyModel, approxStrain, bucketMeasured, mergeDayPoints,
+  RETENTION_DAYS,
 };

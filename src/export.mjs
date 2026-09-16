@@ -98,6 +98,7 @@ const PRESETS = {
   ],
 
   cycles: ['date', 'strain', 'kilojoules', 'avgHr', 'maxHr'],
+  heartrate: ['t', 'bpm'],
 
   workouts: [
     'date',
