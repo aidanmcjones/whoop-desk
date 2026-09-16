@@ -196,6 +196,34 @@ if (!gotLock) {
       mainWindow = null;
     });
 
+    // Web Bluetooth: Chromium fires this repeatedly as devices appear during
+    // a renderer requestDevice() scan. Auto-select the WHOOP strap by name;
+    // if none shows up within 25s the scan is cancelled so the renderer can
+    // tell the user to enable Broadcast Heart Rate in the WHOOP app.
+    let bleCancelCb = null;
+    let bleCancelTimer = null;
+    mainWindow.webContents.on('select-bluetooth-device', (event, devices, callback) => {
+      event.preventDefault();
+      const strap = devices.find((d) => /whoop/i.test(d.deviceName || ''));
+      if (strap) {
+        if (bleCancelTimer) clearTimeout(bleCancelTimer);
+        bleCancelTimer = null;
+        bleCancelCb = null;
+        callback(strap.deviceId);
+        return;
+      }
+      bleCancelCb = callback;
+      if (!bleCancelTimer) {
+        bleCancelTimer = setTimeout(() => {
+          bleCancelTimer = null;
+          if (bleCancelCb) {
+            try { bleCancelCb(''); } catch (err) { /* already resolved */ }
+            bleCancelCb = null;
+          }
+        }, 25000);
+      }
+    });
+
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
     if (isSmoke) {
@@ -719,6 +747,15 @@ if (!gotLock) {
   ipcMain.handle('whoop:getHeartRate', async () => {
     try {
       return await buildHrPayload();
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:recordStrapSamples', async (event, batch) => {
+    try {
+      if (!hrStore) return { error: 'Heart-rate monitor not initialized yet' };
+      return await hrStore.recordMeasuredBatch(Array.isArray(batch) ? batch : []);
     } catch (err) {
       return { error: String(err) };
     }

@@ -185,3 +185,57 @@ test('store ignores a cycle with no energy figure', async () => {
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('recordMeasuredBatch dedups on time, clamps bpm, and survives reload', async () => {
+  const dir = path.join(os.tmpdir(), `whoop-hr-ble-${process.pid}-${Date.now()}`);
+  try {
+    const store = await initHrMonitor({ dataDir: dir });
+    const now = Date.now();
+    const iso = (offsetSec) => new Date(now + offsetSec * 1000).toISOString();
+
+    const first = await store.recordMeasuredBatch([
+      { t: iso(0), bpm: 72 },
+      { t: iso(1), bpm: 74.4 },       // rounds to 74
+      { t: iso(2), bpm: 300 },        // implausible, dropped
+      { t: iso(3), bpm: 76 },
+      { t: 'not-a-date', bpm: 70 },   // dropped
+    ]);
+    assert.equal(first.added, 3);
+
+    // Overlapping resend: only strictly newer timestamps land.
+    const second = await store.recordMeasuredBatch([
+      { t: iso(3), bpm: 76 },
+      { t: iso(4), bpm: 78 },
+    ]);
+    assert.equal(second.added, 1);
+
+    const series = store.getSeries({ timeZone: 'UTC' });
+    assert.equal(series.measured.count, 4);
+    assert.equal(series.measured.latestBpm, 78);
+    assert.deepEqual(series.measured.rangeBpm, { lo: 72, hi: 78 });
+    assert.equal(series.measured.recent.length, 4, 'all four are within 20 min');
+
+    const reloaded = await initHrMonitor({ dataDir: dir });
+    assert.equal(reloaded.getSeries({ timeZone: 'UTC' }).measured.count, 4);
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('measured stream is scoped to the local day and empty batches are safe', async () => {
+  const dir = path.join(os.tmpdir(), `whoop-hr-ble2-${process.pid}-${Date.now()}`);
+  try {
+    const store = await initHrMonitor({ dataDir: dir });
+    assert.equal((await store.recordMeasuredBatch([])).added, 0);
+    assert.equal((await store.recordMeasuredBatch(null)).added, 0);
+
+    await store.recordMeasuredBatch([{ t: new Date().toISOString(), bpm: 71 }]);
+    const yesterday = buildSeries({
+      samples: [], measured: [{ t: new Date().toISOString(), bpm: 71 }],
+      date: '2001-01-01', timeZone: 'UTC', model: null,
+    });
+    assert.equal(yesterday.measured.count, 0, 'other days see none of it');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});

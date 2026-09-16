@@ -1789,6 +1789,123 @@
     { key: 'avgHr', source: 'cycle', label: 'Average Heart Rate', unit: 'bpm', decimals: 0, color: C.red, better: false },
   ];
 
+  /* ---------------- strap Bluetooth (true measured heart rate) ------- */
+
+  // The WHOOP strap broadcasts the standard Bluetooth Heart Rate profile
+  // (service 0x180D) when "Broadcast Heart Rate" is enabled in the WHOOP
+  // app. Reading it here gives real per-second measured bpm — the only
+  // truly live channel; the REST API has none.
+  var ble = {
+    status: 'off', // off | scanning | connected | error
+    bpm: null,
+    lastAt: null,
+    buffer: [],    // [msEpoch, bpm], rolling ~20 min
+    pending: [],   // samples not yet persisted to the main process
+    device: null,
+    error: null,
+  };
+  var bleRerenderTimer = null;
+  var bleFlushTimer = null;
+
+  function parseHeartRateMeasurement(dataView) {
+    // Flags bit 0: 0 = uint8 bpm at offset 1, 1 = uint16 little-endian.
+    var flags = dataView.getUint8(0);
+    return (flags & 0x01) ? dataView.getUint16(1, true) : dataView.getUint8(1);
+  }
+
+  function bleSupported() {
+    return !!(navigator.bluetooth && navigator.bluetooth.requestDevice);
+  }
+
+  function flushStrapSamples() {
+    if (!ble.pending.length) return;
+    var batch = ble.pending.splice(0, ble.pending.length);
+    callApi('recordStrapSamples', [batch], function () { return { added: 0 }; });
+  }
+
+  function onStrapDisconnected() {
+    if (ble.status !== 'error') ble.status = 'off';
+    ble.device = null;
+    if (bleFlushTimer) { clearInterval(bleFlushTimer); bleFlushTimer = null; }
+    flushStrapSamples();
+    if (state.activeView === 'health') renderHeartRate(state.heartRate);
+  }
+
+  function onStrapSample(bpm) {
+    if (!isNum(bpm) || bpm < 25 || bpm > 240) return;
+    var now = Date.now();
+    ble.bpm = bpm;
+    ble.lastAt = now;
+    ble.buffer.push([now, bpm]);
+    var cutoff = now - 20 * 60000;
+    while (ble.buffer.length && ble.buffer[0][0] < cutoff) ble.buffer.shift();
+    ble.pending.push({ t: new Date(now).toISOString(), bpm: bpm });
+
+    if (state.activeView !== 'health') return;
+    // Fast path: bump the number/time in place at broadcast rate, redraw the
+    // whole card (with its strip chart) at most every 2 s.
+    var numEl = document.getElementById('hr-ble-num');
+    var timeEl = document.getElementById('hr-ble-time');
+    if (numEl) {
+      numEl.textContent = fmt(bpm);
+      if (timeEl) timeEl.textContent = hrClock(new Date(now).toISOString(), true);
+      if (!bleRerenderTimer) {
+        bleRerenderTimer = setTimeout(function () {
+          bleRerenderTimer = null;
+          if (state.activeView === 'health') renderHeartRate(state.heartRate);
+        }, 2000);
+      }
+    } else {
+      renderHeartRate(state.heartRate);
+    }
+  }
+
+  async function connectStrap() {
+    if (!bleSupported()) {
+      ble.status = 'error';
+      ble.error = 'Bluetooth is not available in this build.';
+      renderHeartRate(state.heartRate);
+      return;
+    }
+    ble.status = 'scanning';
+    ble.error = null;
+    renderHeartRate(state.heartRate);
+    try {
+      var device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: ['heart_rate'] }],
+      });
+      ble.device = device;
+      device.addEventListener('gattserverdisconnected', onStrapDisconnected);
+      var server = await device.gatt.connect();
+      var service = await server.getPrimaryService('heart_rate');
+      var characteristic = await service.getCharacteristic('heart_rate_measurement');
+      await characteristic.startNotifications();
+      characteristic.addEventListener('characteristicvaluechanged', function (e) {
+        onStrapSample(parseHeartRateMeasurement(e.target.value));
+      });
+      ble.status = 'connected';
+      if (!bleFlushTimer) bleFlushTimer = setInterval(flushStrapSamples, 10000);
+      renderHeartRate(state.heartRate);
+    } catch (err) {
+      ble.status = 'error';
+      ble.error = (err && err.name === 'NotFoundError')
+        ? 'No strap found. In the WHOOP app, open your device settings and turn on Broadcast Heart Rate, then try again.'
+        : 'Bluetooth connection failed: ' + ((err && err.message) || err);
+      ble.device = null;
+      renderHeartRate(state.heartRate);
+    }
+  }
+
+  function disconnectStrap() {
+    try {
+      if (ble.device && ble.device.gatt && ble.device.gatt.connected) {
+        ble.device.gatt.disconnect();
+        return; // gattserverdisconnected fires and finishes the teardown
+      }
+    } catch (err) { /* fall through */ }
+    onStrapDisconnected();
+  }
+
   /* ---------------- live heart rate (health hero) ---------------- */
 
   // WHOOP's public API has no heart-rate time series, so the series here is
@@ -1846,6 +1963,14 @@
       : '';
 
     var live = !!hr.live;
+    var strapOn = ble.status === 'connected';
+    var strapBtn =
+      '<button type="button" id="hr-strap-btn" class="hr-live-btn hr-strap-btn' +
+      (strapOn ? ' on' : '') + '" aria-pressed="' + strapOn + '"' +
+      (ble.status === 'scanning' ? ' disabled' : '') + '>' +
+      '<span class="hr-live-btn-dot" aria-hidden="true"></span>' +
+      (strapOn ? 'Strap live' : ble.status === 'scanning' ? 'Scanning&hellip;' : 'Connect strap') +
+      '</button>';
     var liveBtn =
       '<button type="button" id="hr-live-btn" class="hr-live-btn' + (live ? ' on' : '') +
       '" aria-pressed="' + live + '">' +
@@ -1859,10 +1984,40 @@
       '<div class="card-head hr-head"><span class="micro-label">Heart Rate &mdash; today</span>' +
       '<span class="hr-head-right">' +
       (noteHTML ? '<span class="card-head-note">' + noteHTML + '</span>' : '') +
+      strapBtn +
       liveBtn +
       '</span></div>';
 
-    var readout =
+    var strapFresh = strapOn && isNum(ble.bpm) && (Date.now() - ble.lastAt) < 15000;
+    var readout;
+    if (strapOn) {
+      var strapZone = hrZoneFor(ble.bpm, maxHr);
+      readout =
+        '<div class="hr-readout">' +
+        '<div class="hr-live">' +
+        '<span class="hr-live-dot beating" style="background:' + strapZone.color +
+        (isNum(ble.bpm) ? ';animation-duration:' + (60 / clamp(ble.bpm, 30, 220)).toFixed(2) + 's' : '') +
+        '" aria-hidden="true"></span>' +
+        '<span class="hr-live-value" style="color:' + strapZone.color + '"><span id="hr-ble-num">' +
+        fmt(ble.bpm) + '</span><span class="unit">bpm</span></span>' +
+        '<span class="hr-live-meta">measured &middot; strap &middot; <span id="hr-ble-time">' +
+        (ble.lastAt ? hrClock(new Date(ble.lastAt).toISOString(), true) : '--') + '</span>' +
+        (strapFresh ? '' : ' &middot; waiting for broadcast') + '</span>' +
+        '</div>' +
+        '<div class="hr-stats">' +
+        '<div class="hr-stat"><span class="hr-stat-label">Day avg &middot; measured</span>' +
+        '<span class="hr-stat-value">' + fmt(hr.cycleAvgHr) + '</span></div>' +
+        '<div class="hr-stat"><span class="hr-stat-label">Day max &middot; measured</span>' +
+        '<span class="hr-stat-value" style="color:' + C.red + '">' + fmt(hr.cycleMaxHr) + '</span></div>' +
+        (hr.measured && hr.measured.rangeBpm
+          ? '<div class="hr-stat"><span class="hr-stat-label">Strap range</span>' +
+            '<span class="hr-stat-value">' + fmt(hr.measured.rangeBpm.lo) + '&ndash;' +
+            fmt(hr.measured.rangeBpm.hi) + '</span></div>'
+          : '') +
+        '</div>' +
+        '</div>';
+    } else {
+      readout =
       '<div class="hr-readout">' +
       '<div class="hr-live">' +
       '<span class="hr-live-dot' + (isNum(latest) ? ' beating' : '') +
@@ -1886,9 +2041,36 @@
       '</span></div>' +
       '</div>' +
       '</div>';
+    }
 
     var body;
-    if (pts.length >= 2) {
+    var strip = ble.buffer.length >= 2 ? ble.buffer : null;
+    if (!strip && hr.measured && hr.measured.recent && hr.measured.recent.length >= 2) {
+      strip = hr.measured.recent.map(function (m) { return [new Date(m.t).getTime(), m.bpm]; });
+    }
+    if (strapOn && strip) {
+      // Live strip: the last ~20 minutes of truly measured beats.
+      var step = Math.max(1, Math.floor(strip.length / 480));
+      var sPts = strip.filter(function (_, i) { return i % step === 0; });
+      var sLabels = sPts.map(function (x) { return new Date(x[0]).toISOString(); });
+      var sVals = sPts.map(function (x) { return x[1]; });
+      body = chartSlot(function (w) {
+        return lineChartSVG({
+          width: w, height: 300, dates: sLabels, values: sVals,
+          color: C.red, lineColor: C.red,
+          fmtTick: function (t) { return fmt(t); },
+          xFormat: function (iso) { return hrClock(iso, true); },
+        });
+      }, 900) +
+      '<p class="hr-foot">Measured from your strap&rsquo;s Bluetooth heart-rate broadcast, about once a second. ' +
+      'Showing the last 20 minutes.</p>';
+    } else if (strapOn) {
+      body =
+        '<div class="hr-warmup">' +
+        '<p class="hr-warmup-title">Connected &mdash; waiting for the first beats</p>' +
+        '<p class="hr-warmup-body">The strip draws as broadcasts arrive, about one per second.</p>' +
+        '</div>';
+    } else if (pts.length >= 2) {
       var labels = pts.map(function (p) { return p.t; });
       var values = pts.map(function (p) { return p.bpm; });
       var avg = avgOf(values, 0);
@@ -1942,7 +2124,14 @@
         fmt(hr.model.rmse, 0) + ' bpm). Day average, day max and activity figures are measured by WHOOP.</p>'
       : '';
 
-    el.innerHTML = head + readout + body + acts + liveNote + foot;
+    var bleNote = '';
+    if (ble.status === 'error' && ble.error) {
+      bleNote = '<p class="hr-foot hr-ble-error">' + escapeHTML(ble.error) + '</p>';
+    } else if (ble.status === 'scanning') {
+      bleNote = '<p class="hr-foot">Scanning for your strap&hellip; make sure Broadcast Heart Rate is on in the WHOOP app (Device Settings). The scan gives up after 25 seconds.</p>';
+    }
+
+    el.innerHTML = head + bleNote + readout + body + acts + liveNote + foot;
     fillCharts(el);
   }
 
@@ -2589,6 +2778,12 @@
     var viewHealth = document.getElementById('view-health');
     if (viewHealth) {
       viewHealth.addEventListener('click', async function (e) {
+        var strapBtnEl = e.target.closest('#hr-strap-btn');
+        if (strapBtnEl) {
+          if (ble.status === 'connected') disconnectStrap();
+          else connectStrap();
+          return;
+        }
         var btn = e.target.closest('#hr-live-btn');
         if (!btn) return;
         var turningOn = !btn.classList.contains('on');
