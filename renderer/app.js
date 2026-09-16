@@ -1126,7 +1126,57 @@
       '</div>';
   }
 
+  /* ---------------- overview strap strip ---------------- */
+
+  function renderOverviewStrap() {
+    var el = document.getElementById('overview-strap-card');
+    if (!el) return;
+    var connected = ble.status === 'connected';
+    var scanning = ble.status === 'scanning' && !ble.quiet;
+    var maxHr = profileMaxHr();
+    var zone = hrZoneFor(ble.bpm, maxHr);
+
+    el.hidden = false;
+
+    var left;
+    if (connected) {
+      left =
+        '<span class="hr-live-dot beating" style="background:' + zone.color +
+        (isNum(ble.bpm) ? ';animation-duration:' + (60 / clamp(ble.bpm, 30, 220)).toFixed(2) + 's' : '') +
+        '" aria-hidden="true"></span>' +
+        '<span class="strap-strip-value" style="color:' + zone.color + '"><span id="ov-ble-num">' +
+        fmt(ble.bpm) + '</span><span class="unit">bpm</span></span>' +
+        '<span class="strap-strip-meta">measured &middot; ' + zone.label +
+        (isNum(ble.rmssd) ? ' &middot; HRV ' + ble.rmssd + ' ms' : '') +
+        '</span>';
+    } else if (scanning) {
+      left = '<span class="strap-strip-meta">Scanning for your strap&hellip;</span>';
+    } else if (ble.error && !ble.quiet) {
+      left = '<span class="strap-strip-meta strap-strip-error">' + escapeHTML(ble.error) + '</span>';
+    } else {
+      var info = ble.info || (state.heartRate && state.heartRate.strapInfo);
+      left = '<span class="strap-strip-meta">Strap not connected' +
+        (info && isNum(info.battery) ? ' &middot; last battery ' + info.battery + '%' : '') + '</span>';
+    }
+
+    el.innerHTML =
+      '<span class="micro-label">Live HR</span>' +
+      '<span class="strap-strip-left">' + left + '</span>' +
+      '<button type="button" id="ov-strap-btn" class="hr-live-btn hr-strap-btn' +
+      (connected ? ' on' : '') + '"' + (scanning ? ' disabled' : '') + '>' +
+      '<span class="hr-live-btn-dot" aria-hidden="true"></span>' +
+      (connected ? 'Strap live' : scanning ? 'Scanning&hellip;' : 'Connect strap') +
+      '</button>';
+  }
+
+  // Every strap state change repaints whichever strap surfaces are on screen.
+  function renderStrapSurfaces() {
+    if (state.activeView === 'health') renderHeartRate(state.heartRate);
+    if (state.activeView === 'overview') renderOverviewStrap();
+  }
+
   async function renderOverview(dateStr) {
+    renderOverviewStrap();
     var rec = state.byDate.recovery[dateStr] || null;
     var slp = state.byDate.sleep[dateStr] || null;
     var cyc = state.byDate.cycle[dateStr] || null;
@@ -1879,7 +1929,7 @@
     ble.device = null;
     if (bleFlushTimer) { clearInterval(bleFlushTimer); bleFlushTimer = null; }
     flushStrapSamples();
-    if (state.activeView === 'health') renderHeartRate(state.heartRate);
+    renderStrapSurfaces();
   }
 
   function onStrapSample(reading) {
@@ -1931,6 +1981,8 @@
     if (state.activeView !== 'health') return;
     // Fast path: bump the number/time in place at broadcast rate, redraw the
     // whole card (with its strip chart) at most every 2 s.
+    var ovNum = document.getElementById('ov-ble-num');
+    if (ovNum) ovNum.textContent = fmt(bpm);
     var numEl = document.getElementById('hr-ble-num');
     var timeEl = document.getElementById('hr-ble-time');
     if (numEl) {
@@ -1939,11 +1991,13 @@
       if (!bleRerenderTimer) {
         bleRerenderTimer = setTimeout(function () {
           bleRerenderTimer = null;
-          if (state.activeView === 'health') renderHeartRate(state.heartRate);
+          renderStrapSurfaces();
         }, 2000);
       }
-    } else {
+    } else if (state.activeView === 'health') {
       renderHeartRate(state.heartRate);
+    } else if (state.activeView === 'overview' && !ovNum) {
+      renderOverviewStrap();
     }
   }
 
@@ -1965,7 +2019,7 @@
     ble.error = null;
     if (!bleFlushTimer) bleFlushTimer = setInterval(flushStrapSamples, 10000);
     probeStrap(server, device);
-    renderHeartRate(state.heartRate);
+    renderStrapSurfaces();
   }
 
   // One-time capability probe per connect: battery, device identity, and
@@ -1993,7 +2047,7 @@
       info.rrSupported = !!ble.rrSeen;
       ble.info = info;
       callApi('setStrapInfo', [info], function () { return { ok: true }; });
-      if (state.activeView === 'health') renderHeartRate(state.heartRate);
+      renderStrapSurfaces();
     }, 5000);
   }
 
@@ -2025,7 +2079,7 @@
     ble.status = 'scanning';
     ble.quiet = !!quiet;
     ble.error = null;
-    renderHeartRate(state.heartRate);
+    renderStrapSurfaces();
     try {
       var device = await navigator.bluetooth.requestDevice({
         filters: [{ services: ['heart_rate'] }],
@@ -2044,7 +2098,8 @@
           : 'Bluetooth connection failed: ' + ((err && err.message) || err);
       }
       ble.device = null;
-      if (state.activeView === 'health' || !quiet) renderHeartRate(state.heartRate);
+      if (!quiet) renderStrapSurfaces();
+      else if (state.activeView === 'overview') renderOverviewStrap();
     }
   }
 
@@ -3167,6 +3222,17 @@
       var banner = document.getElementById('anomaly-banner');
       if (banner) { banner.hidden = true; banner.innerHTML = ''; }
     });
+
+    /* overview strap strip */
+    var viewOverview = document.getElementById('view-overview');
+    if (viewOverview) {
+      viewOverview.addEventListener('click', function (e) {
+        var b = e.target.closest('#ov-strap-btn');
+        if (!b) return;
+        if (ble.status === 'connected') disconnectStrap();
+        else connectStrap(false);
+      });
+    }
 
     /* live heart-rate toggle */
     var viewHealth = document.getElementById('view-health');
