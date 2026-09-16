@@ -1,30 +1,42 @@
 // Heart-rate monitor for whoop-desk.
 //
 // WHOOP's public developer API exposes NO heart-rate time series: no
-// intraday, per-second or realtime samples. The finest-grained heart rate
-// available is the running average/max on the in-progress cycle, plus
-// per-workout average/max and time-in-zone totals.
+// intraday, per-second or realtime samples. The finest-grained figures on
+// the in-progress cycle are:
 //
-// So this module builds a heart-rate series the only way the API allows:
-// it polls the current cycle on a short interval and records each reading.
-// Because the cycle's average_heart_rate is a time-weighted mean over the
-// whole cycle so far, the heart rate DURING the gap between two readings
-// can be recovered from consecutive cumulative averages:
+//   average_heart_rate  integer  (rounded to whole bpm)
+//   max_heart_rate      integer
+//   kilojoule           fractional, 3 decimals, monotonically increasing
 //
-//   bpm(a -> b) = (avg_b * elapsed_b - avg_a * elapsed_a) / (elapsed_b - elapsed_a)
+// Differencing consecutive cumulative AVERAGES looks appealing but is
+// unusable in practice: the average is an integer, so its +/-0.5 bpm
+// quantisation is multiplied by elapsed-time/span. Measured on real data at
+// 1292 minutes into a cycle, a 2-minute span carries +/-646 bpm of error.
+// Sampling faster makes that strictly worse.
 //
-// That yields an actual bpm-over-time line at the polling resolution, which
-// is as close to live heart rate as this API permits. Samples are persisted
-// so the series survives restarts, and today's workouts are used to seed
-// periods that happened before sampling began.
+// Energy is the precise channel. kilojoule is fractional, so the energy
+// burned between two readings is exact to three decimals at any span, and
+// energy expenditure maps onto heart rate. That map is personal, so it is
+// fitted from the user's OWN history: every workout and completed cycle
+// supplies a (kJ/min, average bpm) pair. On this user's 1,317 pairs the fit
+// is R^2 0.884 with 9.6 bpm RMSE, and a 4-fold hold-out gives 9.0 bpm
+// median error. Heart rate is therefore reported as an ESTIMATE, with the
+// model's own error published alongside it, never as a measurement.
+//
+// Measured values (day average, day max, per-workout average and max) are
+// passed through untouched and labelled as measured.
 //
 // Node >= 20, ESM. Runs in the Electron MAIN process.
 //
 // Exports:
-//   initHrMonitor({ dataDir })  -> store
-//   store.record({ cycle })     -> { added, sample }
-//   store.getSeries({ cycle, workouts, date }) -> see buildSeries()
-//   deriveIntervals(samples)    -> [{ t, bpm, spanMin }]
+//   initHrMonitor({ dataDir })   -> store
+//   store.record({ cycle })      -> { added, sample }
+//   store.setModel(model)        -> install a fitted model
+//   store.getSeries({...})       -> see buildSeries()
+//   calibrationPoints({ workouts, cycles })
+//   fitEnergyModel(points)
+//   estimateBpm(kjPerMin, model)
+//   deriveIntervals(samples, model)
 //   RETENTION_DAYS
 
 import fs from 'node:fs';
@@ -58,40 +70,113 @@ function localDateOf(iso, timeZone) {
 }
 
 // -----------------------------------------------------------------------
-// Interval derivation (pure, exported for tests)
+// Personal energy -> heart-rate model
 // -----------------------------------------------------------------------
-export function deriveIntervals(samples) {
+// Heart rate rises with energy burn but flattens out, so the fit is done
+// against sqrt(kJ/min), which linearises it better than the raw rate
+// (R^2 0.884 vs 0.874 on this user's history).
+const MIN_CALIBRATION_POINTS = 12;
+
+export function calibrationPoints({ workouts = [], cycles = [] } = {}) {
+  const pts = [];
+  const add = (kj, min, bpm, kind) => {
+    if (!Number.isFinite(kj) || !Number.isFinite(min) || !Number.isFinite(bpm)) return;
+    if (kj <= 0 || min <= 0 || bpm <= 0) return;
+    pts.push({ kjPerMin: kj / min, bpm, kind });
+  };
+  // Workouts are short and span the high end of the range.
+  for (const w of workouts) add(w.kilojoules, w.durationMin, w.avgHr, 'workout');
+  // Completed cycles anchor the resting end. An in-progress cycle has no
+  // end and is skipped, since its duration is not yet known.
+  for (const c of cycles) {
+    if (!c.end || !c.start) continue;
+    const min = (new Date(c.end) - new Date(c.start)) / 60000;
+    if (min < 60) continue;
+    add(c.kilojoules, min, c.avgHr, 'cycle');
+  }
+  return pts;
+}
+
+export function fitEnergyModel(points) {
+  const pts = (points || []).filter((p) => p && p.kjPerMin > 0 && p.bpm > 0);
+  if (pts.length < MIN_CALIBRATION_POINTS) return null;
+
+  const x = pts.map((p) => Math.sqrt(p.kjPerMin));
+  const y = pts.map((p) => p.bpm);
+  const n = pts.length;
+  const sx = x.reduce((a, b) => a + b, 0);
+  const sy = y.reduce((a, b) => a + b, 0);
+  const sxx = x.reduce((a, b) => a + b * b, 0);
+  const sxy = x.reduce((a, b, i) => a + b * y[i], 0);
+  const denom = n * sxx - sx * sx;
+  if (!denom) return null;
+
+  const slope = (n * sxy - sx * sy) / denom;
+  const intercept = (sy - slope * sx) / n;
+  const predict = (xi) => intercept + slope * xi;
+  const ssRes = x.reduce((a, xi, i) => a + (y[i] - predict(xi)) ** 2, 0);
+  const mean = sy / n;
+  const ssTot = y.reduce((a, yi) => a + (yi - mean) ** 2, 0);
+
+  return {
+    intercept,
+    slope,
+    n,
+    r2: ssTot ? Number((1 - ssRes / ssTot).toFixed(3)) : null,
+    rmse: Number(Math.sqrt(ssRes / n).toFixed(1)),
+    fittedAt: new Date().toISOString(),
+  };
+}
+
+export function estimateBpm(kjPerMin, model) {
+  if (!model || !Number.isFinite(kjPerMin) || kjPerMin < 0) return null;
+  const bpm = model.intercept + model.slope * Math.sqrt(kjPerMin);
+  if (!Number.isFinite(bpm) || bpm < MIN_PLAUSIBLE_BPM || bpm > MAX_PLAUSIBLE_BPM) return null;
+  return Math.round(bpm);
+}
+
+// -----------------------------------------------------------------------
+// Interval derivation from energy (pure, exported for tests)
+// -----------------------------------------------------------------------
+export function deriveIntervals(samples, model) {
   const out = [];
   const sorted = (samples || [])
-    .filter((s) => s && Number.isFinite(s.avgHr) && Number.isFinite(s.elapsedMin) && s.elapsedMin > 0)
+    .filter((s) => s && Number.isFinite(s.kilojoules) && Number.isFinite(s.elapsedMin))
     .slice()
     .sort((a, b) => new Date(a.t) - new Date(b.t));
 
   for (let i = 1; i < sorted.length; i++) {
     const a = sorted[i - 1];
     const b = sorted[i];
-    // A new cycle resets elapsed time; the pair is not comparable.
+    // A new cycle resets both elapsed time and cumulative energy.
     if (b.cycleId != null && a.cycleId != null && b.cycleId !== a.cycleId) continue;
+
     const spanMin = b.elapsedMin - a.elapsedMin;
     if (spanMin < MIN_SPAN_MIN) continue;
 
-    const bpm = (b.avgHr * b.elapsedMin - a.avgHr * a.elapsedMin) / spanMin;
-    if (!Number.isFinite(bpm) || bpm < MIN_PLAUSIBLE_BPM || bpm > MAX_PLAUSIBLE_BPM) continue;
+    const deltaKj = b.kilojoules - a.kilojoules;
+    // Energy only accumulates; a decrease means a corrected or reset record.
+    if (!(deltaKj >= 0)) continue;
+
+    const kjPerMin = deltaKj / spanMin;
+    const bpm = estimateBpm(kjPerMin, model);
+    if (bpm == null) continue;
 
     out.push({
       t: b.t,
       from: a.t,
-      bpm: Math.round(bpm),
+      bpm,
+      kjPerMin: Number(kjPerMin.toFixed(2)),
       spanMin: Number(spanMin.toFixed(1)),
-      derived: true,
+      estimated: true,
     });
   }
   return out;
 }
 
-// Workout average heart rate, used to fill stretches of the day that
-// happened before sampling started. Marked derived:false — these are
-// reported by WHOOP rather than computed here.
+// WHOOP-measured workout averages. Used as context markers and to cover
+// stretches of the day that happened before sampling began. Marked
+// estimated:false — these come from WHOOP, not from the model.
 export function workoutPoints(workouts, date) {
   return (workouts || [])
     .filter((w) => w && w.date === date && Number.isFinite(w.avgHr) && w.start)
@@ -101,37 +186,42 @@ export function workoutPoints(workouts, date) {
       maxBpm: Number.isFinite(w.maxHr) ? Math.round(w.maxHr) : null,
       spanMin: Number.isFinite(w.durationMin) ? w.durationMin : null,
       sport: w.sport || 'Activity',
-      derived: false,
+      estimated: false,
     }));
 }
 
-export function buildSeries({ samples, cycle, workouts, date, timeZone }) {
+export function buildSeries({ samples, cycle, workouts, date, timeZone, model }) {
   const tz = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const today = date || localDateOf(new Date().toISOString(), tz);
   const todays = (samples || []).filter((s) => localDateOf(s.t, tz) === today);
 
-  const intervals = deriveIntervals(todays);
+  const intervals = deriveIntervals(todays, model);
   const activities = workoutPoints(workouts, today);
 
   const newest = todays.length ? todays[todays.length - 1] : null;
-  const latestInterval = intervals.length ? intervals[intervals.length - 1] : null;
-
+  const latest = intervals.length ? intervals[intervals.length - 1] : null;
   const bpms = intervals.map((i) => i.bpm);
+
   return {
-    // The series the chart draws: bpm during each polling gap.
+    // Estimated bpm per polling interval, from energy burned.
     points: intervals,
-    // WHOOP-reported per-activity averages, for context markers.
+    // WHOOP-measured per-activity averages.
     activities,
-    // Cumulative figures straight from the cycle, always available.
+    // Measured, straight off the cycle.
     cycleAvgHr: cycle && Number.isFinite(cycle.avgHr) ? Math.round(cycle.avgHr) : null,
     cycleMaxHr: cycle && Number.isFinite(cycle.maxHr) ? Math.round(cycle.maxHr) : null,
-    latestBpm: latestInterval ? latestInterval.bpm : null,
-    latestAt: latestInterval ? latestInterval.t : null,
+    latestBpm: latest ? latest.bpm : null,
+    latestAt: latest ? latest.t : null,
+    latestKjPerMin: latest ? latest.kjPerMin : null,
     rangeBpm: bpms.length ? { lo: Math.min(...bpms), hi: Math.max(...bpms) } : null,
     sampleCount: todays.length,
     lastSampleAt: newest ? newest.t : null,
     date: today,
-    // True once at least two readings exist, i.e. the line has a segment.
+    // Published so the UI can state the estimate's accuracy rather than
+    // implying the line is measured.
+    model: model
+      ? { n: model.n, r2: model.r2, rmse: model.rmse, fittedAt: model.fittedAt }
+      : null,
     warmingUp: intervals.length < 1,
   };
 }
@@ -143,12 +233,14 @@ export async function initHrMonitor({ dataDir } = {}) {
   if (!dataDir) throw new Error('initHrMonitor requires a dataDir');
   const filePath = path.join(dataDir, 'hr-samples.json');
   let samples = [];
+  let model = null;
   let queue = Promise.resolve();
 
   try {
     const raw = await fsp.readFile(filePath, 'utf8');
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed?.samples)) samples = parsed.samples;
+    if (parsed?.model) model = parsed.model;
   } catch (err) {
     if (err && err.code !== 'ENOENT') console.error('hr-monitor: could not read store:', err);
   }
@@ -161,7 +253,7 @@ export async function initHrMonitor({ dataDir } = {}) {
   async function persist() {
     await fsp.mkdir(dataDir, { recursive: true });
     const tmp = path.join(dataDir, `.hr-samples.json.${process.pid}.${Date.now()}.tmp`);
-    await fsp.writeFile(tmp, JSON.stringify({ samples }, null, 2), 'utf8');
+    await fsp.writeFile(tmp, JSON.stringify({ samples, model }, null, 2), 'utf8');
     await fsp.rename(tmp, filePath);
   }
 
@@ -177,19 +269,16 @@ export async function initHrMonitor({ dataDir } = {}) {
     // caller can skip pushing an unchanged series to the renderer.
     record({ cycle, at = new Date().toISOString() } = {}) {
       return enqueue(async () => {
-        if (!cycle || !Number.isFinite(cycle.avgHr) || !cycle.start) return { added: false };
+        // kilojoule is the channel that actually carries resolution.
+        if (!cycle || !Number.isFinite(cycle.kilojoules) || !cycle.start) return { added: false };
         const elapsedMin = (new Date(at) - new Date(cycle.start)) / 60000;
         if (!Number.isFinite(elapsedMin) || elapsedMin <= 0) return { added: false };
 
         const last = samples[samples.length - 1];
-        // Nothing new: same cycle, same rounded average, same max.
-        if (
-          last &&
-          last.cycleId === (cycle.id ?? null) &&
-          last.avgHr === cycle.avgHr &&
-          last.maxHr === (cycle.maxHr ?? null) &&
-          elapsedMin - last.elapsedMin < MIN_SPAN_MIN
-        ) {
+        // WHOOP publishes new data in batches, so most polls see an
+        // unchanged record. Storing those adds zero-energy spans that would
+        // read as a resting heart rate the user never had.
+        if (last && last.cycleId === (cycle.id ?? null) && last.kilojoules === cycle.kilojoules) {
           return { added: false };
         }
 
@@ -198,7 +287,8 @@ export async function initHrMonitor({ dataDir } = {}) {
           cycleId: cycle.id ?? null,
           cycleStart: cycle.start,
           elapsedMin: Number(elapsedMin.toFixed(2)),
-          avgHr: cycle.avgHr,
+          kilojoules: cycle.kilojoules,
+          avgHr: Number.isFinite(cycle.avgHr) ? cycle.avgHr : null,
           maxHr: cycle.maxHr ?? null,
         };
         samples.push(sample);
@@ -209,7 +299,20 @@ export async function initHrMonitor({ dataDir } = {}) {
     },
 
     getSeries({ cycle, workouts, date, timeZone } = {}) {
-      return buildSeries({ samples: samples.slice(), cycle, workouts, date, timeZone });
+      return buildSeries({ samples: samples.slice(), cycle, workouts, date, timeZone, model });
+    },
+
+    // Installs a freshly fitted model and persists it, so a restart keeps
+    // estimating before the first refit completes.
+    setModel(next) {
+      if (!next) return null;
+      model = next;
+      enqueue(persist).catch((err) => console.error('hr-monitor: model persist failed:', err));
+      return model;
+    },
+
+    getModel() {
+      return model;
     },
 
     // Test/debug helper: the raw readings.
@@ -219,4 +322,7 @@ export async function initHrMonitor({ dataDir } = {}) {
   };
 }
 
-export default { initHrMonitor, deriveIntervals, workoutPoints, buildSeries, RETENTION_DAYS };
+export default {
+  initHrMonitor, deriveIntervals, workoutPoints, buildSeries,
+  calibrationPoints, fitEnergyModel, estimateBpm, RETENTION_DAYS,
+};

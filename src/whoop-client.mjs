@@ -502,8 +502,17 @@ export function normalizeCycle(r) {
   const score = r.score || {};
   return {
     date: localDate(r.end || r.start || r.created_at),
+    // start/end are carried through because the heart-rate monitor needs the
+    // cycle's real duration to turn cumulative energy into a per-minute rate,
+    // and needs `end === null` to recognise the in-progress cycle.
+    start: r.start ?? null,
+    end: r.end ?? null,
     strain: scored ? score.strain ?? null : null,
-    kilojoules: scored && score.kilojoule != null ? Math.round(score.kilojoule) : null,
+    // NOT rounded: kilojoule is the only fractional figure WHOOP publishes on
+    // a cycle, and the heart-rate estimate depends on its precision. Rounding
+    // to whole kJ quantises the derived bpm badly over short spans.
+    kilojoules: scored && score.kilojoule != null ? score.kilojoule : null,
+    kilojoulesRounded: scored && score.kilojoule != null ? Math.round(score.kilojoule) : null,
     avgHr: scored ? score.average_heart_rate ?? null : null,
     maxHr: scored ? score.max_heart_rate ?? null : null,
   };

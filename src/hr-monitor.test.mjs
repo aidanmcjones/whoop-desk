@@ -3,150 +3,182 @@ import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
 import fsp from 'node:fs/promises';
-import { deriveIntervals, workoutPoints, buildSeries, initHrMonitor } from './hr-monitor.mjs';
+import {
+  calibrationPoints, fitEnergyModel, estimateBpm,
+  deriveIntervals, workoutPoints, buildSeries, initHrMonitor,
+} from './hr-monitor.mjs';
 
 const CYCLE_START = '2026-09-15T04:44:00.000Z';
 const mins = (n) => new Date(new Date(CYCLE_START).getTime() + n * 60000).toISOString();
 
-test('deriveIntervals recovers the bpm that occurred between two cumulative averages', () => {
-  // 60 min at avg 60, then by 120 min the cumulative avg is 70.
-  // Sum: 60*60 = 3600, 70*120 = 8400 -> the extra hour carried 4800/60 = 80 bpm.
+// A model shaped like the real fit: bpm = 35 + 16*sqrt(kJ/min).
+const MODEL = { intercept: 35, slope: 16, n: 1300, r2: 0.88, rmse: 9.6 };
+
+test('calibrationPoints pairs energy rate with measured bpm, skipping unusable records', () => {
+  const pts = calibrationPoints({
+    workouts: [
+      { kilojoules: 877, durationMin: 47, avgHr: 109 },
+      { kilojoules: 0, durationMin: 30, avgHr: 100 },   // no energy
+      { kilojoules: 500, durationMin: 0, avgHr: 100 },  // no duration
+      { kilojoules: 500, durationMin: 30, avgHr: null },// no bpm
+    ],
+    cycles: [
+      { start: CYCLE_START, end: mins(1440), kilojoules: 9000, avgHr: 70 },
+      { start: CYCLE_START, end: null, kilojoules: 5000, avgHr: 68 },  // in progress
+      { start: CYCLE_START, end: mins(30), kilojoules: 200, avgHr: 60 },// too short
+    ],
+  });
+  assert.equal(pts.length, 2);
+  assert.equal(pts[0].kind, 'workout');
+  assert.ok(Math.abs(pts[0].kjPerMin - 877 / 47) < 1e-9);
+  assert.equal(pts[1].kind, 'cycle');
+});
+
+test('fitEnergyModel recovers a known relationship and needs enough points', () => {
+  const truth = (k) => 35 + 16 * Math.sqrt(k);
+  const pts = [];
+  for (let k = 1; k <= 40; k++) pts.push({ kjPerMin: k, bpm: truth(k) });
+  const m = fitEnergyModel(pts);
+  assert.ok(Math.abs(m.intercept - 35) < 0.5, 'intercept ' + m.intercept);
+  assert.ok(Math.abs(m.slope - 16) < 0.5, 'slope ' + m.slope);
+  assert.ok(m.r2 > 0.999);
+  assert.equal(m.n, 40);
+
+  assert.equal(fitEnergyModel(pts.slice(0, 5)), null, 'too few points');
+  assert.equal(fitEnergyModel([]), null);
+  assert.equal(fitEnergyModel(null), null);
+});
+
+test('estimateBpm applies the model and rejects impossible output', () => {
+  assert.equal(estimateBpm(0, MODEL), 35);
+  assert.equal(estimateBpm(4, MODEL), 67);   // 35 + 16*2
+  assert.equal(estimateBpm(25, MODEL), 115); // 35 + 16*5
+  assert.equal(estimateBpm(null, MODEL), null);
+  assert.equal(estimateBpm(-1, MODEL), null);
+  assert.equal(estimateBpm(5, null), null);
+  // a slope steep enough to exceed the plausible ceiling is dropped
+  assert.equal(estimateBpm(100, { intercept: 35, slope: 200 }), null);
+});
+
+test('deriveIntervals turns cumulative energy into bpm over time', () => {
+  // 10 min at 4 kJ/min, then 10 min at 25 kJ/min.
   const out = deriveIntervals([
-    { t: mins(60), elapsedMin: 60, avgHr: 60, cycleId: 1 },
-    { t: mins(120), elapsedMin: 120, avgHr: 70, cycleId: 1 },
-  ]);
-  assert.equal(out.length, 1);
-  assert.equal(out[0].bpm, 80);
-  assert.equal(out[0].spanMin, 60);
-  assert.equal(out[0].derived, true);
+    { t: mins(10), elapsedMin: 10, kilojoules: 40, cycleId: 1 },
+    { t: mins(20), elapsedMin: 20, kilojoules: 80, cycleId: 1 },
+    { t: mins(30), elapsedMin: 30, kilojoules: 330, cycleId: 1 },
+  ], MODEL);
+  assert.deepEqual(out.map((o) => o.bpm), [67, 115]);
+  assert.deepEqual(out.map((o) => o.kjPerMin), [4, 25]);
+  assert.equal(out[0].estimated, true);
 });
 
-test('deriveIntervals holds a flat line when the cumulative average does not move', () => {
-  const out = deriveIntervals([
-    { t: mins(30), elapsedMin: 30, avgHr: 65, cycleId: 1 },
-    { t: mins(60), elapsedMin: 60, avgHr: 65, cycleId: 1 },
-    { t: mins(90), elapsedMin: 90, avgHr: 65, cycleId: 1 },
-  ]);
-  assert.deepEqual(out.map((o) => o.bpm), [65, 65]);
-});
-
-test('deriveIntervals skips cycle rollovers, too-short spans, and impossible values', () => {
-  // different cycleId -> not comparable
+test('deriveIntervals ignores rollovers, short spans, and energy going backwards', () => {
   assert.equal(deriveIntervals([
-    { t: mins(60), elapsedMin: 60, avgHr: 60, cycleId: 1 },
-    { t: mins(5), elapsedMin: 5, avgHr: 60, cycleId: 2 },
-  ]).length, 0);
+    { t: mins(10), elapsedMin: 10, kilojoules: 40, cycleId: 1 },
+    { t: mins(5), elapsedMin: 5, kilojoules: 10, cycleId: 2 },
+  ], MODEL).length, 0, 'cycle rollover');
 
-  // span under the floor
   assert.equal(deriveIntervals([
-    { t: mins(60), elapsedMin: 60.0, avgHr: 60, cycleId: 1 },
-    { t: mins(60), elapsedMin: 60.3, avgHr: 61, cycleId: 1 },
-  ]).length, 0);
+    { t: mins(10), elapsedMin: 10.0, kilojoules: 40, cycleId: 1 },
+    { t: mins(10), elapsedMin: 10.3, kilojoules: 42, cycleId: 1 },
+  ], MODEL).length, 0, 'span under the floor');
 
-  // implausible: cumulative avg jumps far too much for the elapsed gap
   assert.equal(deriveIntervals([
-    { t: mins(60), elapsedMin: 60, avgHr: 60, cycleId: 1 },
-    { t: mins(62), elapsedMin: 62, avgHr: 70, cycleId: 1 },
-  ]).length, 0);
+    { t: mins(10), elapsedMin: 10, kilojoules: 90, cycleId: 1 },
+    { t: mins(20), elapsedMin: 20, kilojoules: 40, cycleId: 1 },
+  ], MODEL).length, 0, 'energy decreased');
+
+  assert.equal(deriveIntervals([{ t: mins(10), elapsedMin: 10, kilojoules: 40 }], MODEL).length, 0);
 });
 
-test('deriveIntervals sorts unordered input and tolerates missing fields', () => {
-  const out = deriveIntervals([
-    { t: mins(120), elapsedMin: 120, avgHr: 70, cycleId: 1 },
-    { t: mins(60), elapsedMin: 60, avgHr: 60, cycleId: 1 },
-    { t: mins(90), avgHr: null, cycleId: 1 },
-    null,
-  ]);
-  assert.equal(out.length, 1);
-  assert.equal(out[0].bpm, 80);
+test('deriveIntervals yields nothing without a model', () => {
+  assert.equal(deriveIntervals([
+    { t: mins(10), elapsedMin: 10, kilojoules: 40, cycleId: 1 },
+    { t: mins(20), elapsedMin: 20, kilojoules: 80, cycleId: 1 },
+  ], null).length, 0);
 });
 
-test('workoutPoints returns only the requested day and keeps sport and max', () => {
+test('workoutPoints keeps only the requested day and is marked measured', () => {
   const pts = workoutPoints([
     { date: '2026-09-15', start: mins(200), avgHr: 109, maxHr: 146, durationMin: 47, sport: 'Dance' },
-    { date: '2026-09-14', start: mins(10), avgHr: 100, maxHr: 130, durationMin: 20, sport: 'Run' },
-    { date: '2026-09-15', start: mins(300), avgHr: null, sport: 'Walk' },
+    { date: '2026-09-14', start: mins(10), avgHr: 100, sport: 'Run' },
   ], '2026-09-15');
   assert.equal(pts.length, 1);
   assert.equal(pts[0].sport, 'Dance');
-  assert.equal(pts[0].bpm, 109);
+  assert.equal(pts[0].estimated, false);
   assert.equal(pts[0].maxBpm, 146);
-  assert.equal(pts[0].derived, false);
 });
 
-test('buildSeries reports warming up until a second reading arrives', () => {
-  const one = buildSeries({
-    samples: [{ t: mins(60), elapsedMin: 60, avgHr: 60, cycleId: 1 }],
-    cycle: { avgHr: 60, maxHr: 120 },
-    date: '2026-09-15',
-    timeZone: 'UTC',
-  });
-  assert.equal(one.warmingUp, true);
-  assert.equal(one.points.length, 0);
-  assert.equal(one.cycleAvgHr, 60);
-  assert.equal(one.cycleMaxHr, 120);
-
-  const two = buildSeries({
-    samples: [
-      { t: mins(60), elapsedMin: 60, avgHr: 60, cycleId: 1 },
-      { t: mins(120), elapsedMin: 120, avgHr: 70, cycleId: 1 },
-    ],
-    cycle: { avgHr: 70, maxHr: 145 },
-    date: '2026-09-15',
-    timeZone: 'UTC',
-  });
-  assert.equal(two.warmingUp, false);
-  assert.equal(two.latestBpm, 80);
-  assert.deepEqual(two.rangeBpm, { lo: 80, hi: 80 });
-  assert.equal(two.sampleCount, 2);
-});
-
-test('buildSeries keeps only samples from the requested local day', () => {
+test('buildSeries publishes the model accuracy and separates measured values', () => {
   const s = buildSeries({
     samples: [
-      { t: '2026-09-14T20:00:00Z', elapsedMin: 30, avgHr: 60, cycleId: 1 },
-      { t: '2026-09-15T10:00:00Z', elapsedMin: 60, avgHr: 60, cycleId: 2 },
-      { t: '2026-09-15T11:00:00Z', elapsedMin: 120, avgHr: 70, cycleId: 2 },
+      { t: mins(10), elapsedMin: 10, kilojoules: 40, cycleId: 1 },
+      { t: mins(20), elapsedMin: 20, kilojoules: 80, cycleId: 1 },
     ],
+    cycle: { avgHr: 70, maxHr: 145 },
+    workouts: [],
     date: '2026-09-15',
     timeZone: 'UTC',
+    model: MODEL,
   });
-  assert.equal(s.sampleCount, 2);
-  assert.equal(s.points.length, 1);
+  assert.equal(s.warmingUp, false);
+  assert.equal(s.latestBpm, 67);
+  assert.equal(s.latestKjPerMin, 4);
+  assert.equal(s.cycleAvgHr, 70);   // measured, untouched
+  assert.equal(s.cycleMaxHr, 145);  // measured, untouched
+  assert.equal(s.model.rmse, 9.6);
+  assert.equal(s.model.n, 1300);
 });
 
-test('store records a reading, skips an unchanged one, and persists across reloads', async () => {
+test('buildSeries warms up with one reading and filters to the local day', () => {
+  const one = buildSeries({
+    samples: [{ t: mins(10), elapsedMin: 10, kilojoules: 40, cycleId: 1 }],
+    date: '2026-09-15', timeZone: 'UTC', model: MODEL,
+  });
+  assert.equal(one.warmingUp, true);
+  assert.equal(one.sampleCount, 1);
+
+  const split = buildSeries({
+    samples: [
+      { t: '2026-09-14T20:00:00Z', elapsedMin: 10, kilojoules: 40, cycleId: 1 },
+      { t: '2026-09-15T10:00:00Z', elapsedMin: 10, kilojoules: 40, cycleId: 2 },
+      { t: '2026-09-15T10:20:00Z', elapsedMin: 30, kilojoules: 120, cycleId: 2 },
+    ],
+    date: '2026-09-15', timeZone: 'UTC', model: MODEL,
+  });
+  assert.equal(split.sampleCount, 2);
+  assert.equal(split.points.length, 1);
+});
+
+test('store discards unchanged reads, keeps energy, and persists the model', async () => {
   const dir = path.join(os.tmpdir(), `whoop-hr-test-${process.pid}-${Date.now()}`);
   try {
     const store = await initHrMonitor({ dataDir: dir });
-    const cycle = { id: 7, start: CYCLE_START, avgHr: 60, maxHr: 120 };
+    store.setModel(MODEL);
+    const cycle = { id: 7, start: CYCLE_START, kilojoules: 40, avgHr: 60, maxHr: 120 };
 
-    const first = await store.record({ cycle, at: mins(60) });
-    assert.equal(first.added, true);
-    assert.equal(first.sample.elapsedMin, 60);
-
-    // identical reading, moments later -> not recorded
-    const dup = await store.record({ cycle, at: mins(60.2) });
-    assert.equal(dup.added, false);
-
-    const moved = await store.record({ cycle: { ...cycle, avgHr: 70 }, at: mins(120) });
-    assert.equal(moved.added, true);
+    assert.equal((await store.record({ cycle, at: mins(10) })).added, true);
+    // WHOOP batches updates, so most polls repeat the same energy figure.
+    assert.equal((await store.record({ cycle, at: mins(10.5) })).added, false);
+    assert.equal((await store.record({ cycle, at: mins(11) })).added, false);
+    assert.equal((await store.record({ cycle: { ...cycle, kilojoules: 80 }, at: mins(20) })).added, true);
 
     const series = store.getSeries({ cycle: { avgHr: 70, maxHr: 120 }, date: '2026-09-15', timeZone: 'UTC' });
-    assert.equal(series.latestBpm, 80);
+    assert.equal(series.latestBpm, 67);
 
     const reloaded = await initHrMonitor({ dataDir: dir });
     assert.equal(reloaded.listSamples().length, 2);
+    assert.equal(reloaded.getModel().rmse, 9.6, 'model survived the restart');
   } finally {
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });
 
-test('store ignores a cycle with no heart rate yet', async () => {
+test('store ignores a cycle with no energy figure', async () => {
   const dir = path.join(os.tmpdir(), `whoop-hr-test2-${process.pid}-${Date.now()}`);
   try {
     const store = await initHrMonitor({ dataDir: dir });
-    assert.equal((await store.record({ cycle: { id: 1, start: CYCLE_START, avgHr: null } })).added, false);
+    assert.equal((await store.record({ cycle: { id: 1, start: CYCLE_START, kilojoules: null } })).added, false);
     assert.equal((await store.record({ cycle: null })).added, false);
     assert.equal(store.listSamples().length, 0);
   } finally {

@@ -343,11 +343,90 @@ if (!gotLock) {
     return refreshInFlight;
   }
 
-  // Heart-rate sampling. WHOOP's API exposes no HR time series, so the only
-  // way to draw heart rate over time is to read the in-progress cycle's
-  // running average often and difference consecutive readings. 2 minutes is
-  // well inside the rate limit and gives a usable resolution.
-  const HR_SAMPLE_MINS = 2;
+  // Heart-rate sampling. WHOOP publishes no HR time series, so the series is
+  // reconstructed from the in-progress cycle's cumulative kilojoules (see
+  // src/hr-monitor.mjs for why energy and not the integer average).
+  //
+  // Cadence: measured against the live API, the cycle record refreshes in
+  // batches roughly every 1-2 minutes as the strap syncs. 30 seconds catches
+  // each batch promptly and costs 2,880 calls a day against a published
+  // ceiling of 100/minute and 10,000/day. Unchanged reads are discarded by
+  // the store, so a fast poll adds no false points.
+  const HR_SAMPLE_SECONDS = 30;
+
+  // Live mode: the user holds the button on and Whoop+ polls as fast as is
+  // responsible. The published ceiling is 100 requests/minute and 10,000/day,
+  // so 2 seconds costs 30/minute — under a third of the per-minute budget.
+  // It is capped in time rather than left running: 20 minutes of live mode is
+  // 600 calls, and the baseline timer is suspended meanwhile so the two never
+  // stack. Note this lowers LATENCY, not resolution: WHOOP still publishes in
+  // batches, so live mode means a new batch shows up within ~2s of landing.
+  const HR_LIVE_SECONDS = 2;
+  const HR_LIVE_MAX_MINUTES = 20;
+  let hrLiveTimer = null;
+  let hrLiveUntil = 0;
+
+  function hrLiveActive() {
+    return !!hrLiveTimer && Date.now() < hrLiveUntil;
+  }
+
+  function stopHrLive() {
+    if (hrLiveTimer) clearInterval(hrLiveTimer);
+    hrLiveTimer = null;
+    hrLiveUntil = 0;
+    startHrTimer();
+    pushHeartRate();
+  }
+
+  function startHrLive() {
+    if (hrTimer) clearInterval(hrTimer);
+    hrTimer = null;
+    if (hrLiveTimer) clearInterval(hrLiveTimer);
+    hrLiveUntil = Date.now() + HR_LIVE_MAX_MINUTES * 60000;
+    hrLiveTimer = setInterval(() => {
+      if (Date.now() >= hrLiveUntil) {
+        stopHrLive();
+        return;
+      }
+      sampleHeartRate().catch((err) => console.error('HR live sample failed:', err));
+    }, HR_LIVE_SECONDS * 1000);
+    sampleHeartRate().catch((err) => console.error('HR live sample failed:', err));
+  }
+
+  async function pushHeartRate() {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    try {
+      mainWindow.webContents.send('whoop:heartRate', await buildHrPayload());
+    } catch (err) {
+      console.error('Heart-rate push failed:', err);
+    }
+  }
+
+  // Refit the personal energy -> bpm model occasionally; history barely
+  // moves within a session, so hourly is ample.
+  const HR_REFIT_MINS = 60;
+  let hrRefitAt = 0;
+
+  async function refitHrModel(force = false) {
+    if (!hrStore) return null;
+    if (!force && Date.now() - hrRefitAt < HR_REFIT_MINS * 60000) return hrStore.getModel();
+    try {
+      const hrMod = await loadHrMonitor();
+      const historyMod = await loadHistory();
+      const data = await historyMod.getHistory({ days: 0 });
+      const pts = hrMod.calibrationPoints({
+        workouts: data.workouts || [],
+        cycles: data.cycles || [],
+      });
+      const model = hrMod.fitEnergyModel(pts);
+      hrRefitAt = Date.now();
+      if (model) hrStore.setModel(model);
+      return model;
+    } catch (err) {
+      console.error('Heart-rate model refit failed:', err);
+      return hrStore.getModel();
+    }
+  }
 
   async function sampleHeartRate() {
     if (!hrStore) return;
@@ -362,11 +441,20 @@ if (!gotLock) {
       const raw = (page && page.records) || [];
       if (!raw.length) return;
       const cycle = client.normalizeCycle(raw[0]);
-      // Carry the API's own ids/timestamps through for interval derivation.
+      await refitHrModel();
+      // Carry the API's own ids/timestamps plus cumulative energy through.
       const result = await hrStore.record({
-        cycle: { id: raw[0].id, start: raw[0].start, avgHr: cycle.avgHr, maxHr: cycle.maxHr },
+        cycle: {
+          id: raw[0].id,
+          start: raw[0].start,
+          kilojoules: cycle.kilojoules,
+          avgHr: cycle.avgHr,
+          maxHr: cycle.maxHr,
+        },
       });
-      if (result.added && mainWindow && !mainWindow.isDestroyed()) {
+      // While live, push every poll so the card's clock and countdown stay
+      // honest even when WHOOP returned no new data.
+      if ((result.added || hrLiveActive()) && mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('whoop:heartRate', await buildHrPayload());
       }
     } catch (err) {
@@ -379,7 +467,8 @@ if (!gotLock) {
     if (hrTimer) clearInterval(hrTimer);
     hrTimer = setInterval(() => {
       sampleHeartRate().catch((err) => console.error('HR sampler failed:', err));
-    }, HR_SAMPLE_MINS * 60000);
+    }, HR_SAMPLE_SECONDS * 1000);
+    refitHrModel(true).catch(() => {});
     sampleHeartRate().catch((err) => console.error('HR sampler failed:', err));
   }
 
@@ -390,9 +479,13 @@ if (!gotLock) {
     const cycles = data.cycles || [];
     const workouts = data.workouts || [];
     const cycle = cycles.length ? cycles[0] : null;
+    const live = hrLiveActive();
     return {
       ...hrStore.getSeries({ cycle, workouts }),
-      sampleEveryMins: HR_SAMPLE_MINS,
+      sampleEverySeconds: live ? HR_LIVE_SECONDS : HR_SAMPLE_SECONDS,
+      live,
+      liveSecondsLeft: live ? Math.max(0, Math.round((hrLiveUntil - Date.now()) / 1000)) : 0,
+      liveMaxMinutes: HR_LIVE_MAX_MINUTES,
     };
   }
 
@@ -625,6 +718,16 @@ if (!gotLock) {
 
   ipcMain.handle('whoop:getHeartRate', async () => {
     try {
+      return await buildHrPayload();
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:setLiveHr', async (event, { on } = {}) => {
+    try {
+      if (on) startHrLive();
+      else stopHrLive();
       return await buildHrPayload();
     } catch (err) {
       return { error: String(err) };
