@@ -29,10 +29,12 @@ function windowSize() {
 
 app.setName('Whoop+');
 
-// Chromium's newer Web Bluetooth permissions backend remembers granted
-// devices across launches, which lets navigator.bluetooth.getDevices()
-// reconnect to the strap without a chooser — the basis of auto-connect.
-app.commandLine.appendSwitch('enable-features', 'WebBluetoothNewPermissionsBackend');
+// NOTE: do NOT enable Chromium's WebBluetoothNewPermissionsBackend here.
+// On Electron 33 / macOS 26 it crashes the browser process (EXC_BREAKPOINT
+// in the Bluetooth chooser path) the moment a Web Bluetooth scan starts —
+// reproduced deterministically via the auto-connect nudge. Auto-connect
+// works without it: the renderer's quiet requestDevice() scan is resolved
+// below by device name, no chooser UI and no persisted grants needed.
 
 // The packaged Whoop+.app and a dev `electron .` checkout both default to
 // the same userData dir ("Whoop+"), since userData is keyed off app name.
@@ -206,31 +208,33 @@ if (!gotLock) {
     });
 
     // Web Bluetooth: Chromium fires this repeatedly as devices appear during
-    // a renderer requestDevice() scan. Auto-select the WHOOP strap by name;
-    // if none shows up within 25s the scan is cancelled so the renderer can
-    // tell the user to enable Broadcast Heart Rate in the WHOOP app.
-    let bleCancelCb = null;
+    // a renderer requestDevice() scan, handing over a fresh callback each
+    // time. Rules learned the hard way (browser-process CHECK crashes):
+    // never invoke a callback synchronously inside the event, never invoke
+    // a stale callback after a newer event has fired, and never invoke one
+    // twice. Each event gets a token; only the newest token's callback may
+    // ever run, always deferred, always once.
+    let bleChooserSeq = 0;
     let bleCancelTimer = null;
     mainWindow.webContents.on('select-bluetooth-device', (event, devices, callback) => {
       event.preventDefault();
+      const token = ++bleChooserSeq;
+      const fireOnce = (deviceId) => {
+        if (token !== bleChooserSeq) return; // a newer event owns the chooser
+        bleChooserSeq++; // consume: no later timer/path may fire again
+        if (bleCancelTimer) { clearTimeout(bleCancelTimer); bleCancelTimer = null; }
+        try { callback(deviceId); } catch (err) { /* chooser already gone */ }
+      };
       const strap = devices.find((d) => /whoop/i.test(d.deviceName || ''));
       if (strap) {
-        if (bleCancelTimer) clearTimeout(bleCancelTimer);
-        bleCancelTimer = null;
-        bleCancelCb = null;
-        callback(strap.deviceId);
+        setTimeout(() => fireOnce(strap.deviceId), 0);
         return;
       }
-      bleCancelCb = callback;
-      if (!bleCancelTimer) {
-        bleCancelTimer = setTimeout(() => {
-          bleCancelTimer = null;
-          if (bleCancelCb) {
-            try { bleCancelCb(''); } catch (err) { /* already resolved */ }
-            bleCancelCb = null;
-          }
-        }, 25000);
-      }
+      if (bleCancelTimer) clearTimeout(bleCancelTimer);
+      bleCancelTimer = setTimeout(() => {
+        bleCancelTimer = null;
+        fireOnce('');
+      }, 25000);
     });
 
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
