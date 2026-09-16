@@ -54,6 +54,8 @@ if (!gotLock) {
   let lastDashboardForTray = null;
   let refreshInFlight = null;
   let autoRefreshTimer = null;
+  let hrStore = null;
+  let hrTimer = null;
   let morningTimer = null;
   let backfillRunning = false;
 
@@ -75,6 +77,9 @@ if (!gotLock) {
   }
   async function loadExport() {
     return import('./src/export.mjs');
+  }
+  async function loadHrMonitor() {
+    return import('./src/hr-monitor.mjs');
   }
 
   async function getDashboardWithFallback() {
@@ -338,6 +343,59 @@ if (!gotLock) {
     return refreshInFlight;
   }
 
+  // Heart-rate sampling. WHOOP's API exposes no HR time series, so the only
+  // way to draw heart rate over time is to read the in-progress cycle's
+  // running average often and difference consecutive readings. 2 minutes is
+  // well inside the rate limit and gives a usable resolution.
+  const HR_SAMPLE_MINS = 2;
+
+  async function sampleHeartRate() {
+    if (!hrStore) return;
+    try {
+      const client = await loadWhoopClient();
+      const ctx = await client.getAuthedContext();
+      // fetchRecordsPage always sends start/end, so both must be real ISO
+      // strings. 36 hours back reliably covers the in-progress cycle.
+      const end = new Date().toISOString();
+      const start = new Date(Date.now() - 36 * 3600 * 1000).toISOString();
+      const page = await client.fetchRecordsPage('cycle', { start, end, limit: 1 }, ctx);
+      const raw = (page && page.records) || [];
+      if (!raw.length) return;
+      const cycle = client.normalizeCycle(raw[0]);
+      // Carry the API's own ids/timestamps through for interval derivation.
+      const result = await hrStore.record({
+        cycle: { id: raw[0].id, start: raw[0].start, avgHr: cycle.avgHr, maxHr: cycle.maxHr },
+      });
+      if (result.added && mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('whoop:heartRate', await buildHrPayload());
+      }
+    } catch (err) {
+      // Sampling is best-effort; a transient failure must not kill the timer.
+      console.error('Heart-rate sample failed:', err);
+    }
+  }
+
+  function startHrTimer() {
+    if (hrTimer) clearInterval(hrTimer);
+    hrTimer = setInterval(() => {
+      sampleHeartRate().catch((err) => console.error('HR sampler failed:', err));
+    }, HR_SAMPLE_MINS * 60000);
+    sampleHeartRate().catch((err) => console.error('HR sampler failed:', err));
+  }
+
+  async function buildHrPayload() {
+    if (!hrStore) return { error: 'Heart-rate monitor not initialized yet' };
+    const historyMod = await loadHistory();
+    const data = await historyMod.getHistory({ days: 2 });
+    const cycles = data.cycles || [];
+    const workouts = data.workouts || [];
+    const cycle = cycles.length ? cycles[0] : null;
+    return {
+      ...hrStore.getSeries({ cycle, workouts }),
+      sampleEveryMins: HR_SAMPLE_MINS,
+    };
+  }
+
   function startAutoRefreshTimer() {
     if (autoRefreshTimer) clearInterval(autoRefreshTimer);
     const mins = Math.max(1, Number(settings.autoRefreshMins) || DEFAULT_SETTINGS.autoRefreshMins);
@@ -565,6 +623,14 @@ if (!gotLock) {
     }
   });
 
+  ipcMain.handle('whoop:getHeartRate', async () => {
+    try {
+      return await buildHrPayload();
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
   ipcMain.handle('whoop:getSettings', async () => {
     try {
       return { ...settings };
@@ -723,6 +789,9 @@ if (!gotLock) {
     const historyMod = await loadHistory();
     historyMod.initHistory({ dataDir });
 
+    const hrMod = await loadHrMonitor();
+    hrStore = await hrMod.initHrMonitor({ dataDir });
+
     if (isIpcCheck) {
       await runIpcCheck();
       app.exit(0);
@@ -734,10 +803,12 @@ if (!gotLock) {
     createWindow();
     createTray();
     startAutoRefreshTimer();
+    startHrTimer();
     scheduleMorningNotification();
 
     powerMonitor.on('resume', () => {
       doRefresh().catch((err) => console.error('Refresh on resume failed:', err));
+      sampleHeartRate().catch((err) => console.error('HR sample on resume failed:', err));
     });
 
     app.on('activate', () => {

@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('whoop', {
 
   getHistory: (opts) => ipcRenderer.invoke('whoop:getHistory', opts),
   getBackfillStatus: () => ipcRenderer.invoke('whoop:getBackfillStatus'),
+  getHeartRate: () => ipcRenderer.invoke('whoop:getHeartRate'),
 
   getAnalytics: (opts) => ipcRenderer.invoke('whoop:getAnalytics', opts),
 
@@ -26,5 +27,10 @@ contextBridge.exposeInMainWorld('whoop', {
     const listener = (_event, progress) => cb(progress);
     ipcRenderer.on('whoop:backfillProgress', listener);
     return () => ipcRenderer.removeListener('whoop:backfillProgress', listener);
+  },
+  onHeartRate: (cb) => {
+    const listener = (_event, progress) => cb(progress);
+    ipcRenderer.on('whoop:heartRate', listener);
+    return () => ipcRenderer.removeListener('whoop:heartRate', listener);
   },
 });
