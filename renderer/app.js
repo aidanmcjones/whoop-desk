@@ -71,6 +71,7 @@
     trendRange: 7, // number of days, or the string 'ytd'
     settings: null,
     coachStatus: null,
+    heartRate: null,
     coachHistory: [], // [{role:'user'|'assistant', content}]
     coachBusy: false,
   };
@@ -302,17 +303,18 @@
     }).join('');
   }
 
-  function xLabelLayer(g, dates, centerFor) {
+  function xLabelLayer(g, dates, centerFor, format) {
     var n = dates.length;
     if (!n) return '';
     var maxLabels = clamp(Math.floor(g.plotW / 78), 3, 14);
     var step = Math.max(1, Math.ceil(n / maxLabels));
-    var contiguous = isContiguous(dates);
+    var contiguous = format ? false : isContiguous(dates);
     var out = '';
     for (var i = 0; i < n; i++) {
       if (i % step !== 0 && i !== n - 1) continue;
       if (i !== n - 1 && n - 1 - i < step * 0.6) continue;
-      out += txt(centerFor(i), g.h - 8, axisLabel(dates[i], n, contiguous), { size: 10, fill: C.disabled });
+      var label = format ? format(dates[i]) : axisLabel(dates[i], n, contiguous);
+      out += txt(centerFor(i), g.h - 8, label, { size: 10, fill: C.disabled });
     }
     return out;
   }
@@ -447,7 +449,7 @@
       '" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" opacity="' + (o.lineOpacity || 1) + '" />' +
       dots +
       avgLayer(g, o.avg, yFor, o.avgLabel) +
-      xLabelLayer(g, dates, centerFor) +
+      xLabelLayer(g, dates, centerFor, o.xFormat) +
       '</svg>'
     );
   }
@@ -872,6 +874,16 @@
         sleepHours: compareField('sleep', 'durationMin', 1, function (v) { return isNum(v) ? v / 60 : null; }),
         strain: compareField('cycle', 'strain', 1),
       },
+    };
+  }
+
+  // Mock mode has no main process to sample the cycle, so show the warm-up
+  // state rather than inventing a heart-rate trace.
+  function mockGetHeartRate() {
+    return {
+      points: [], activities: [], cycleAvgHr: null, cycleMaxHr: null,
+      latestBpm: null, latestAt: null, rangeBpm: null,
+      sampleCount: 0, lastSampleAt: null, warmingUp: true, sampleEveryMins: 2,
     };
   }
 
@@ -1767,6 +1779,136 @@
     { key: 'avgHr', source: 'cycle', label: 'Average Heart Rate', unit: 'bpm', decimals: 0, color: C.red, better: false },
   ];
 
+  /* ---------------- live heart rate (health hero) ---------------- */
+
+  // WHOOP's public API has no heart-rate time series, so the series here is
+  // built in the main process by polling the in-progress cycle's running
+  // average and differencing consecutive readings. See src/hr-monitor.mjs.
+  var HR_ZONE_BANDS = [
+    { label: 'Rest', color: C.sleep },
+    { label: 'Light', color: '#4a90d9' },
+    { label: 'Moderate', color: C.green },
+    { label: 'Hard', color: C.yellow },
+    { label: 'Max', color: C.red },
+  ];
+
+  function hrZoneFor(bpm, maxHr) {
+    if (!isNum(bpm) || !isNum(maxHr) || maxHr <= 0) return HR_ZONE_BANDS[0];
+    var pct = bpm / maxHr;
+    if (pct >= 0.9) return HR_ZONE_BANDS[4];
+    if (pct >= 0.8) return HR_ZONE_BANDS[3];
+    if (pct >= 0.7) return HR_ZONE_BANDS[2];
+    if (pct >= 0.6) return HR_ZONE_BANDS[1];
+    return HR_ZONE_BANDS[0];
+  }
+
+  function hrClock(iso) {
+    if (!iso) return '--';
+    var d = new Date(iso);
+    if (isNaN(d)) return '--';
+    return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
+
+  function renderHeartRate(hr) {
+    var el = document.getElementById('health-hr-card');
+    if (!el) return;
+
+    if (!hr || hr.error) {
+      el.innerHTML =
+        cardHead('Heart Rate &mdash; today') +
+        '<div class="empty-state">Heart rate is unavailable right now.</div>';
+      return;
+    }
+
+    var maxHr = (state.data && state.data.profile && state.data.profile.maxHr) || null;
+    var pts = hr.points || [];
+    var latest = hr.latestBpm;
+    var zone = hrZoneFor(latest, maxHr);
+    var liveColor = isNum(latest) ? zone.color : C.label;
+
+    var noteHTML = isNum(hr.sampleEveryMins)
+      ? 'Sampled every <strong>' + fmtInt(hr.sampleEveryMins) + ' min</strong>'
+      : '';
+
+    var head =
+      '<div class="card-head"><span class="micro-label">Heart Rate &mdash; today</span>' +
+      (noteHTML ? '<span class="card-head-note">' + noteHTML + '</span>' : '') +
+      '</div>';
+
+    var readout =
+      '<div class="hr-readout">' +
+      '<div class="hr-live">' +
+      '<span class="hr-live-dot' + (isNum(latest) ? ' beating' : '') +
+      '" style="background:' + liveColor + '" aria-hidden="true"></span>' +
+      '<span class="hr-live-value" style="color:' + liveColor + '">' + fmt(latest) +
+      '<span class="unit">bpm</span></span>' +
+      '<span class="hr-live-meta">' +
+      (isNum(latest)
+        ? zone.label + ' &middot; ' + hrClock(hr.latestAt)
+        : 'waiting for the first reading') +
+      '</span>' +
+      '</div>' +
+      '<div class="hr-stats">' +
+      '<div class="hr-stat"><span class="hr-stat-label">Day avg</span>' +
+      '<span class="hr-stat-value">' + fmt(hr.cycleAvgHr) + '</span></div>' +
+      '<div class="hr-stat"><span class="hr-stat-label">Day max</span>' +
+      '<span class="hr-stat-value" style="color:' + C.red + '">' + fmt(hr.cycleMaxHr) + '</span></div>' +
+      '<div class="hr-stat"><span class="hr-stat-label">Today&rsquo;s range</span>' +
+      '<span class="hr-stat-value">' +
+      (hr.rangeBpm ? fmt(hr.rangeBpm.lo) + '&ndash;' + fmt(hr.rangeBpm.hi) : '--') +
+      '</span></div>' +
+      '</div>' +
+      '</div>';
+
+    var body;
+    if (pts.length >= 2) {
+      var labels = pts.map(function (p) { return p.t; });
+      var values = pts.map(function (p) { return p.bpm; });
+      var avg = avgOf(values, 0);
+      body = chartSlot(function (w) {
+        return lineChartSVG({
+          width: w, height: 300, dates: labels, values: values, avg: avg,
+          color: C.red, lineColor: C.red,
+          dotColors: values.map(function (v) { return hrZoneFor(v, maxHr).color; }),
+          fmtTick: function (t) { return fmt(t); },
+          xFormat: hrClock,
+        });
+      }, 900);
+    } else {
+      body =
+        '<div class="hr-warmup">' +
+        '<p class="hr-warmup-title">Building today&rsquo;s line</p>' +
+        '<p class="hr-warmup-body">WHOOP&rsquo;s API publishes no live heart-rate feed, so Whoop+ reads your ' +
+        'in-progress day every ' + fmtInt(hr.sampleEveryMins || 2) + ' minutes and derives the beats between ' +
+        'readings. The chart needs two readings to draw its first segment.</p>' +
+        '<p class="hr-warmup-count">' + fmtInt(hr.sampleCount) + ' reading' +
+        (hr.sampleCount === 1 ? '' : 's') + ' so far' +
+        (hr.lastSampleAt ? ', last at ' + hrClock(hr.lastSampleAt) : '') + '</p>' +
+        '</div>';
+    }
+
+    var acts = (hr.activities || []).length
+      ? '<div class="hr-activities">' +
+        hr.activities.map(function (a) {
+          var az = hrZoneFor(a.bpm, maxHr);
+          return '<span class="hr-activity">' +
+            '<span class="stage-swatch" style="background:' + az.color + '"></span>' +
+            '<b>' + escapeHTML(a.sport) + '</b> ' + hrClock(a.t) + ' &middot; avg ' + fmt(a.bpm) +
+            (isNum(a.maxBpm) ? ' &middot; max ' + fmt(a.maxBpm) : '') + ' bpm</span>';
+        }).join('') +
+        '</div>'
+      : '';
+
+    el.innerHTML = head + readout + body + acts;
+    fillCharts(el);
+  }
+
+  async function loadHeartRate() {
+    var res = await callApi('getHeartRate', [], mockGetHeartRate);
+    state.heartRate = res;
+    renderHeartRate(res);
+  }
+
   function renderHealth(dateStr) {
     var rec = state.byDate.recovery[dateStr] || null;
     var cyc = state.byDate.cycle[dateStr] || null;
@@ -2219,7 +2361,7 @@
     else if (view === 'recovery') await renderRecovery(dateStr);
     else if (view === 'sleep') await renderSleep(dateStr);
     else if (view === 'strain') await renderStrain(dateStr);
-    else if (view === 'health') renderHealth(dateStr);
+    else if (view === 'health') { renderHealth(dateStr); loadHeartRate(); }
     else if (view === 'trends') await renderTrends(state.trendRange);
     else if (view === 'coach') await renderCoach();
 
@@ -2455,6 +2597,12 @@
 
     if (window.whoop && typeof window.whoop.onUpdated === 'function') {
       window.whoop.onUpdated(function (freshData) { applyUpdate(freshData); });
+    }
+    if (window.whoop && typeof window.whoop.onHeartRate === 'function') {
+      window.whoop.onHeartRate(function (hr) {
+        state.heartRate = hr;
+        if (state.activeView === 'health') renderHeartRate(hr);
+      });
     }
 
     loadAndRender();
