@@ -29,6 +29,11 @@ function windowSize() {
 
 app.setName('Whoop+');
 
+// Chromium's newer Web Bluetooth permissions backend remembers granted
+// devices across launches, which lets navigator.bluetooth.getDevices()
+// reconnect to the strap without a chooser — the basis of auto-connect.
+app.commandLine.appendSwitch('enable-features', 'WebBluetoothNewPermissionsBackend');
+
 // The packaged Whoop+.app and a dev `electron .` checkout both default to
 // the same userData dir ("Whoop+"), since userData is keyed off app name.
 // Running both at once causes silent single-instance-lock quits and
@@ -109,6 +114,10 @@ if (!gotLock) {
     // Optional. When blank, the coach uses the signed-in `claude` CLI
     // (the user's own Anthropic account via OAuth).
     anthropicApiKey: '',
+    // Strap features
+    autoConnectStrap: true,
+    restingAlertEnabled: false,
+    restingAlertBpm: 100,
     // Internal, persisted alongside the user-facing settings above: tracks
     // the anomaly flag's last-known state so we only notify on a
     // false -> true transition rather than on every refresh.
@@ -332,6 +341,15 @@ if (!gotLock) {
     tray.setContextMenu(menu);
   }
 
+  let trayBaseTitle = '';
+
+  function applyTrayTitle() {
+    if (!tray) return;
+    const fresh = strapState.lastBeatAt && Date.now() - strapState.lastBeatAt < 15000;
+    const beat = fresh && Number.isFinite(strapState.lastBpm) ? `\u2665${strapState.lastBpm} ` : '';
+    tray.setTitle(`${beat}${trayBaseTitle}`);
+  }
+
   function updateTray(dashboard) {
     if (!tray) return;
     lastDashboardForTray = dashboard;
@@ -339,7 +357,8 @@ if (!gotLock) {
     const newestScore = recovery.find((r) => r.score != null)?.score ?? null;
     const zone = zoneForScore(newestScore);
     const pct = newestScore != null ? `${Math.round(newestScore)}%` : '--';
-    tray.setTitle(`${zone.emoji} ${pct}`);
+    trayBaseTitle = `${zone.emoji} ${pct}`;
+    applyTrayTitle();
     updateTrayMenu();
   }
 
@@ -369,6 +388,87 @@ if (!gotLock) {
       }
     })();
     return refreshInFlight;
+  }
+
+  // -----------------------------------------------------------------------
+  // Strap beat stream (renderer pushes each measured Bluetooth reading)
+  // -----------------------------------------------------------------------
+  const strapState = {
+    beats: [], // [msEpoch, bpm], rolling 4 minutes
+    lastBeatAt: 0,
+    lastBpm: null,
+    inWorkout: false,
+    lastAlertAt: 0,
+    trayTick: 0,
+    reverting: null,
+  };
+
+  function maybeRestingAlert() {
+    if (!settings.restingAlertEnabled || !settings.notificationsEnabled) return;
+    if (strapState.inWorkout) return;
+    const threshold = Number(settings.restingAlertBpm) || 100;
+    const now = Date.now();
+    if (now - strapState.lastAlertAt < 30 * 60000) return;
+    const windowBeats = strapState.beats.filter(([t]) => now - t <= 3 * 60000);
+    if (windowBeats.length < 90) return; // need ~3 minutes of steady stream
+    const span = windowBeats[windowBeats.length - 1][0] - windowBeats[0][0];
+    if (span < 2.5 * 60000) return;
+    const sorted = windowBeats.map(([, b]) => b).sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    if (median <= threshold) return;
+    strapState.lastAlertAt = now;
+    try {
+      new Notification({
+        title: `Heart rate elevated: ${median} bpm`,
+        body: `Median over the last 3 minutes is above your ${threshold} bpm resting alert. Not medical advice.`,
+      }).show();
+    } catch (err) {
+      console.error('Resting alert failed:', err);
+    }
+  }
+
+  ipcMain.on('whoop:strapBeat', (event, payload) => {
+    const bpm = payload && Number(payload.bpm);
+    if (!Number.isFinite(bpm) || bpm < 25 || bpm > 240) return;
+    const now = Date.now();
+    strapState.lastBeatAt = now;
+    strapState.lastBpm = Math.round(bpm);
+    strapState.inWorkout = !!(payload && payload.inWorkout);
+    strapState.beats.push([now, bpm]);
+    const cutoff = now - 4 * 60000;
+    while (strapState.beats.length && strapState.beats[0][0] < cutoff) strapState.beats.shift();
+
+    // Tray updates at most every 5s; a lapsed stream reverts the title.
+    if (now - strapState.trayTick > 5000) {
+      strapState.trayTick = now;
+      applyTrayTitle();
+    }
+    if (strapState.reverting) clearTimeout(strapState.reverting);
+    strapState.reverting = setTimeout(applyTrayTitle, 16000);
+
+    maybeRestingAlert();
+  });
+
+  // -----------------------------------------------------------------------
+  // Auto-connect: nudge the renderer to try a silent strap connection. The
+  // executeJavaScript userGesture flag satisfies Chromium's activation
+  // requirement, and the main-process chooser auto-picks the WHOOP by name.
+  // -----------------------------------------------------------------------
+  const STRAP_RETRY_MINS = 3;
+  let strapRetryTimer = null;
+
+  function nudgeStrapConnect() {
+    if (!settings.autoConnectStrap) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (strapState.lastBeatAt && Date.now() - strapState.lastBeatAt < 20000) return; // already streaming
+    mainWindow.webContents
+      .executeJavaScript('window.__tryStrapConnect && window.__tryStrapConnect(true)', true)
+      .catch(() => {});
+  }
+
+  function startStrapRetryTimer() {
+    if (strapRetryTimer) clearInterval(strapRetryTimer);
+    strapRetryTimer = setInterval(nudgeStrapConnect, STRAP_RETRY_MINS * 60000);
   }
 
   // Heart-rate sampling. WHOOP publishes no HR time series, so the series is
@@ -663,7 +763,24 @@ if (!gotLock) {
     const full = await historyMod.getHistory({ days: 0 });
     const recent = await historyMod.getHistory({ days: 14 });
 
-    return contextMod.buildCoachContext({ full, recent, analytics: analyticsMod });
+    let strap = null;
+    if (hrStore) {
+      const series = hrStore.getSeries({});
+      const recent = series.measured && series.measured.recent ? series.measured.recent : [];
+      const bpms = recent.map((r) => r.bpm);
+      const latestAt = series.measured && series.measured.latestAt;
+      strap = {
+        streamingNow: !!(latestAt && Date.now() - new Date(latestAt).getTime() < 2 * 60000),
+        latestMeasuredBpm: series.measured ? series.measured.latestBpm : null,
+        latestMeasuredAt: latestAt || null,
+        last20MinAvgBpm: bpms.length ? Math.round(bpms.reduce((a, b) => a + b, 0) / bpms.length) : null,
+        last20MinMaxBpm: bpms.length ? Math.max(...bpms) : null,
+        measuredReadingsToday: series.measured ? series.measured.count : 0,
+        lastWorkoutSession: series.lastSession || null,
+        battery: series.strapInfo ? series.strapInfo.battery ?? null : null,
+      };
+    }
+    return contextMod.buildCoachContext({ full, recent, analytics: analyticsMod, strap });
   }
 
   // -----------------------------------------------------------------------
@@ -734,9 +851,15 @@ if (!gotLock) {
     try {
       const exportMod = await loadExport();
       const outDir = path.join(os.homedir(), 'Downloads');
-      const historyMod = await loadHistory();
-      const data = await historyMod.getHistory({ days: 0 });
-      const records = data[kind];
+      let records;
+      if (kind === 'heartrate') {
+        if (!hrStore) throw new Error('Heart-rate monitor not initialized yet');
+        records = hrStore.listMeasured();
+      } else {
+        const historyMod = await loadHistory();
+        const data = await historyMod.getHistory({ days: 0 });
+        records = data[kind];
+      }
       if (!records) throw new Error(`Unknown export kind: "${kind}"`);
       return await exportMod.exportCsv({ kind, records, outDir });
     } catch (err) {
@@ -747,6 +870,24 @@ if (!gotLock) {
   ipcMain.handle('whoop:getHeartRate', async () => {
     try {
       return await buildHrPayload();
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:addStrapSession', async (event, session) => {
+    try {
+      if (!hrStore) return { error: 'Heart-rate monitor not initialized yet' };
+      return await hrStore.addSession(session || null);
+    } catch (err) {
+      return { error: String(err) };
+    }
+  });
+
+  ipcMain.handle('whoop:setStrapInfo', async (event, info) => {
+    try {
+      if (!hrStore) return { error: 'Heart-rate monitor not initialized yet' };
+      return await hrStore.setStrapInfo(info || null);
     } catch (err) {
       return { error: String(err) };
     }
@@ -944,11 +1085,14 @@ if (!gotLock) {
     createTray();
     startAutoRefreshTimer();
     startHrTimer();
+    startStrapRetryTimer();
+    setTimeout(nudgeStrapConnect, 8000); // first silent attempt after the UI settles
     scheduleMorningNotification();
 
     powerMonitor.on('resume', () => {
       doRefresh().catch((err) => console.error('Refresh on resume failed:', err));
       sampleHeartRate().catch((err) => console.error('HR sample on resume failed:', err));
+      setTimeout(nudgeStrapConnect, 5000);
     });
 
     app.on('activate', () => {

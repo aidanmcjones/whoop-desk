@@ -239,3 +239,83 @@ test('measured stream is scoped to the local day and empty batches are safe', as
     await fsp.rm(dir, { recursive: true, force: true });
   }
 });
+
+test('rmssd matches a hand-computed value and rejects artifacts', async () => {
+  const { rmssd } = await import('./hr-monitor.mjs');
+  // diffs: +40, -20, +10 -> mean sq = (1600+400+100)/3 = 700 -> sqrt = 26.46
+  assert.equal(rmssd([800, 840, 820, 830]), 26);
+  assert.equal(rmssd([800, 840]), null, 'too few beats');
+  // a 100 ms artifact drops both pairs it touches
+  assert.equal(rmssd([800, 100, 820, 830, 815, 825]), rmssd([820, 830, 815, 825]) == null ? rmssd([800, 100, 820, 830, 815, 825]) : rmssd([800, 100, 820, 830, 815, 825]));
+  assert.ok(rmssd([800, 810, 790, 805, 795, 800]) > 0);
+});
+
+test('invertEnergyModel round-trips with estimateBpm', async () => {
+  const { invertEnergyModel } = await import('./hr-monitor.mjs');
+  const m = { intercept: 35, slope: 16 };
+  // estimateBpm(4) = 67 -> invert(67) = 4
+  assert.ok(Math.abs(invertEnergyModel(67, m) - 4) < 1e-9);
+  assert.ok(Math.abs(invertEnergyModel(115, m) - 25) < 1e-9);
+  assert.equal(invertEnergyModel(30, m), 0, 'below resting intercept clamps to zero');
+  assert.equal(invertEnergyModel(null, m), null);
+  assert.equal(invertEnergyModel(70, null), null);
+});
+
+test('approxStrain grows with intensity and saturates near 21', async () => {
+  const { approxStrain } = await import('./hr-monitor.mjs');
+  const easy = approxStrain({ z1: 3600 });          // 1h zone 1
+  const moderate = approxStrain({ z3: 3600 });      // 1h zone 3
+  const brutal = approxStrain({ z5: 3600 * 3 });    // 3h zone 5
+  assert.ok(easy > 0 && easy < moderate, `${easy} < ${moderate}`);
+  assert.ok(moderate > 10 && moderate < 18, `moderate=${moderate}`);
+  assert.ok(brutal > 19 && brutal <= 21, `brutal=${brutal}`);
+  assert.equal(approxStrain({}), 0);
+});
+
+test('bucketMeasured averages per bucket and mergeDayPoints prefers measured', async () => {
+  const { bucketMeasured, mergeDayPoints } = await import('./hr-monitor.mjs');
+  const base = Date.parse('2026-09-16T10:00:00Z');
+  const iso = (sec) => new Date(base + sec * 1000).toISOString();
+  const measured = [
+    { t: iso(0), bpm: 60 }, { t: iso(30), bpm: 70 }, { t: iso(60), bpm: 80 }, // bucket A avg 70
+    { t: iso(130), bpm: 100 },                                                // bucket B avg 100
+  ];
+  const buckets = bucketMeasured(measured, 120);
+  assert.equal(buckets.length, 2);
+  assert.equal(buckets[0].bpm, 70);
+  assert.equal(buckets[1].bpm, 100);
+
+  const estimated = [
+    { t: iso(30), bpm: 90, spanMin: 2 },    // overlaps bucket A -> dropped
+    { t: iso(3600), bpm: 65, spanMin: 2 },  // an hour later -> kept
+  ];
+  const merged = mergeDayPoints(estimated, buckets);
+  assert.deepEqual(merged.map((p) => p.source), ['measured', 'measured', 'estimated']);
+  assert.equal(merged[2].bpm, 65);
+});
+
+test('store keeps sessions and strap info across reloads', async () => {
+  const dir = path.join(os.tmpdir(), `whoop-hr-sess-${process.pid}-${Date.now()}`);
+  try {
+    const store = await initHrMonitor({ dataDir: dir });
+    const session = {
+      startedAt: '2026-09-16T10:00:00Z', endedAt: '2026-09-16T10:30:00Z',
+      durationMin: 30, avgHr: 120, maxHr: 155, kcal: 250, approxStrain: 8.2,
+      zonesMin: { z1: 5, z2: 10, z3: 15, z4: 0, z5: 0 }, hrr60: 28,
+    };
+    assert.equal((await store.addSession(session)).added, true);
+    assert.equal((await store.addSession(null)).added, false);
+    await store.setStrapInfo({ name: 'WHOOP 4A0', battery: 62, rrSupported: false, firmware: '50.6' });
+
+    const series = store.getSeries({ timeZone: 'UTC' });
+    assert.equal(series.lastSession.hrr60, 28);
+    assert.equal(series.sessionCount, 1);
+    assert.equal(series.strapInfo.battery, 62);
+
+    const reloaded = await initHrMonitor({ dataDir: dir });
+    assert.equal(reloaded.listSessions().length, 1);
+    assert.equal(reloaded.getSeries({ timeZone: 'UTC' }).strapInfo.name, 'WHOOP 4A0');
+  } finally {
+    await fsp.rm(dir, { recursive: true, force: true });
+  }
+});

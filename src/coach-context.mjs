@@ -8,7 +8,7 @@
 //   - 28-day baselines for the key metrics, so "vs your usual" is grounded.
 //
 // Exports:
-//   buildCoachContext({ full, recent, analytics, now, timeZone })
+//   buildCoachContext({ full, recent, analytics, strap, now, timeZone })
 
 const round = (v, dp = 0) => (v == null || !Number.isFinite(Number(v)) ? null : Number(Number(v).toFixed(dp)));
 const kjToKcal = (kj) => (kj == null ? null : Math.round(kj / 4.184));
@@ -52,6 +52,7 @@ export function buildCoachContext({
   full,
   recent,
   analytics,
+  strap = null,
   now = new Date(),
   timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
 } = {}) {
@@ -174,5 +175,8 @@ export function buildCoachContext({
     sleepDebt7d: sleepDebt7dMin == null ? null : { min: round(sleepDebt7dMin), pretty: hm(sleepDebt7dMin) },
     acwr,
     strainTarget: analytics.strainTargetFor(newestScore),
+    // Live measured heart rate from the strap's Bluetooth broadcast, when
+    // the desktop app has been receiving it. Null when never connected.
+    liveHeartRate: strap,
   };
 }

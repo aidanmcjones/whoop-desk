@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('whoop', {
   getHeartRate: () => ipcRenderer.invoke('whoop:getHeartRate'),
   setLiveHr: (payload) => ipcRenderer.invoke('whoop:setLiveHr', payload),
   recordStrapSamples: (batch) => ipcRenderer.invoke('whoop:recordStrapSamples', batch),
+  addStrapSession: (session) => ipcRenderer.invoke('whoop:addStrapSession', session),
+  setStrapInfo: (info) => ipcRenderer.invoke('whoop:setStrapInfo', info),
+  sendStrapBeat: (payload) => ipcRenderer.send('whoop:strapBeat', payload),
 
   getAnalytics: (opts) => ipcRenderer.invoke('whoop:getAnalytics', opts),
 

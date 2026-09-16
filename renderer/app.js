@@ -72,6 +72,7 @@
     settings: null,
     coachStatus: null,
     heartRate: null,
+    workout: null,
     coachHistory: [], // [{role:'user'|'assistant', content}]
     coachBusy: false,
   };
@@ -889,6 +890,9 @@
     };
   }
 
+  function mockAddStrapSession() { return { added: true }; }
+  function mockSetStrapInfo() { return { ok: true }; }
+
   function mockSetLiveHr(payload) {
     var base = mockGetHeartRate();
     base.live = !!(payload && payload.on);
@@ -932,7 +936,7 @@
     var stored = lsGet(LS_SETTINGS, null);
     if (stored) return stored;
     var seed = (state.data && state.data.settings) ||
-      { launchAtLogin: false, notificationsEnabled: true, morningHour: 8, autoRefreshMins: 10 };
+      { launchAtLogin: false, notificationsEnabled: true, morningHour: 8, autoRefreshMins: 10, autoConnectStrap: true, restingAlertEnabled: false, restingAlertBpm: 100 };
     lsSet(LS_SETTINGS, seed);
     return seed;
   }
@@ -1803,14 +1807,61 @@
     pending: [],   // samples not yet persisted to the main process
     device: null,
     error: null,
+    quiet: false,   // silent auto-connect attempt: no error surfacing
+    rrBuf: [],      // last ~150 RR intervals (ms) for live RMSSD
+    rrSeen: false,
+    rmssd: null,
+    info: null,     // probe: battery / firmware / model
   };
   var bleRerenderTimer = null;
   var bleFlushTimer = null;
 
   function parseHeartRateMeasurement(dataView) {
-    // Flags bit 0: 0 = uint8 bpm at offset 1, 1 = uint16 little-endian.
+    // Standard Heart Rate Measurement (0x2A37) layout, driven by flags:
+    //   bit 0: bpm is uint16 LE (else uint8)
+    //   bit 3: a uint16 Energy Expended field is present (skipped)
+    //   bit 4: one or more uint16 RR intervals follow, unit 1/1024 s
     var flags = dataView.getUint8(0);
-    return (flags & 0x01) ? dataView.getUint16(1, true) : dataView.getUint8(1);
+    var offset = 1;
+    var bpm;
+    if (flags & 0x01) { bpm = dataView.getUint16(offset, true); offset += 2; }
+    else { bpm = dataView.getUint8(offset); offset += 1; }
+    if (flags & 0x08) offset += 2;
+    var rr = [];
+    if (flags & 0x10) {
+      while (offset + 1 < dataView.byteLength) {
+        rr.push(Math.round((dataView.getUint16(offset, true) / 1024) * 1000));
+        offset += 2;
+      }
+    }
+    return { bpm: bpm, rr: rr };
+  }
+
+  // Tiny local copies of tested helpers in src/hr-monitor.mjs (the renderer
+  // cannot import ESM).
+  function rmssdOf(rrMs) {
+    var diffs = [];
+    for (var i = 1; i < rrMs.length; i++) {
+      var a = rrMs[i - 1], b = rrMs[i];
+      if (a > 250 && a < 2500 && b > 250 && b < 2500) diffs.push(b - a);
+    }
+    if (diffs.length < 3) return null;
+    var meanSq = diffs.reduce(function (x, d) { return x + d * d; }, 0) / diffs.length;
+    return Math.round(Math.sqrt(meanSq));
+  }
+
+  function kjPerMinAt(bpm) {
+    var m = state.heartRate && state.heartRate.model;
+    if (!m || !isNum(m.intercept) || !isNum(m.slope) || !isNum(bpm)) return null;
+    var x = (bpm - m.intercept) / m.slope;
+    return x > 0 ? x * x : 0;
+  }
+
+  function approxStrainOf(zoneSec) {
+    var w = { z1: 1, z2: 2, z3: 4, z4: 8, z5: 16 };
+    var raw = 0;
+    Object.keys(w).forEach(function (k) { raw += ((zoneSec[k] || 0) / 60) * w[k]; });
+    return Number((21 * (1 - Math.exp(-raw / 200))).toFixed(1));
   }
 
   function bleSupported() {
@@ -1831,7 +1882,8 @@
     if (state.activeView === 'health') renderHeartRate(state.heartRate);
   }
 
-  function onStrapSample(bpm) {
+  function onStrapSample(reading) {
+    var bpm = reading && reading.bpm;
     if (!isNum(bpm) || bpm < 25 || bpm > 240) return;
     var now = Date.now();
     ble.bpm = bpm;
@@ -1840,6 +1892,41 @@
     var cutoff = now - 20 * 60000;
     while (ble.buffer.length && ble.buffer[0][0] < cutoff) ble.buffer.shift();
     ble.pending.push({ t: new Date(now).toISOString(), bpm: bpm });
+
+    // RR intervals -> live HRV, when the strap broadcasts them.
+    if (reading.rr && reading.rr.length) {
+      ble.rrSeen = true;
+      ble.rrBuf.push.apply(ble.rrBuf, reading.rr);
+      if (ble.rrBuf.length > 150) ble.rrBuf = ble.rrBuf.slice(-150);
+      ble.rmssd = rmssdOf(ble.rrBuf);
+    }
+
+    // Live workout accumulation, one tick per broadcast (~1 s).
+    if (state.workout && state.workout.active) {
+      var w = state.workout;
+      var dt = Math.min(3, Math.max(0.5, (now - (w.lastTickAt || now)) / 1000));
+      w.lastTickAt = now;
+      var zi = HR_ZONE_BANDS.indexOf(hrZoneFor(bpm, profileMaxHr()));
+      var zk = 'z' + (zi + 1);
+      w.zoneSec[zk] = (w.zoneSec[zk] || 0) + dt;
+      var rate = kjPerMinAt(bpm);
+      if (isNum(rate)) w.kcal += (rate / 4.184) * (dt / 60);
+      if (!isNum(w.maxHr) || bpm > w.maxHr) w.maxHr = bpm;
+      w.hrSum += bpm * dt;
+      w.hrSec += dt;
+      w.recent.push([now, bpm]);
+      while (w.recent.length && w.recent[0][0] < now - 40000) w.recent.shift();
+      updateWorkoutFastPath();
+    }
+
+    // Every beat feeds the tray + resting-alert stream in the main process.
+    if (window.whoop && typeof window.whoop.sendStrapBeat === 'function') {
+      window.whoop.sendStrapBeat({
+        t: new Date(now).toISOString(),
+        bpm: bpm,
+        inWorkout: !!(state.workout && state.workout.active),
+      });
+    }
 
     if (state.activeView !== 'health') return;
     // Fast path: bump the number/time in place at broadcast rate, redraw the
@@ -1860,41 +1947,114 @@
     }
   }
 
-  async function connectStrap() {
+  function profileMaxHr() {
+    return (state.data && state.data.profile && state.data.profile.maxHr) || null;
+  }
+
+  async function subscribeStrap(device) {
+    ble.device = device;
+    device.addEventListener('gattserverdisconnected', onStrapDisconnected);
+    var server = await device.gatt.connect();
+    var service = await server.getPrimaryService('heart_rate');
+    var characteristic = await service.getCharacteristic('heart_rate_measurement');
+    await characteristic.startNotifications();
+    characteristic.addEventListener('characteristicvaluechanged', function (e) {
+      onStrapSample(parseHeartRateMeasurement(e.target.value));
+    });
+    ble.status = 'connected';
+    ble.error = null;
+    if (!bleFlushTimer) bleFlushTimer = setInterval(flushStrapSamples, 10000);
+    probeStrap(server, device);
+    renderHeartRate(state.heartRate);
+  }
+
+  // One-time capability probe per connect: battery, device identity, and
+  // (after a few beats) whether this strap broadcasts RR intervals.
+  async function probeStrap(server, device) {
+    var info = { name: device.name || null };
+    async function readString(svcName, chName) {
+      try {
+        var svc = await server.getPrimaryService(svcName);
+        var ch = await svc.getCharacteristic(chName);
+        var v = await ch.readValue();
+        return new TextDecoder().decode(v).replace(/\0+$/, '') || null;
+      } catch (e) { return null; }
+    }
+    try {
+      var bsvc = await server.getPrimaryService('battery_service');
+      var bch = await bsvc.getCharacteristic('battery_level');
+      info.battery = (await bch.readValue()).getUint8(0);
+    } catch (e) { info.battery = null; }
+    info.manufacturer = await readString('device_information', 'manufacturer_name_string');
+    info.model = await readString('device_information', 'model_number_string');
+    info.firmware = await readString('device_information', 'firmware_revision_string');
+    // Give the stream a moment so the RR flag has been observed (or not).
+    setTimeout(function () {
+      info.rrSupported = !!ble.rrSeen;
+      ble.info = info;
+      callApi('setStrapInfo', [info], function () { return { ok: true }; });
+      if (state.activeView === 'health') renderHeartRate(state.heartRate);
+    }, 5000);
+  }
+
+  // Reconnect to a previously granted strap without a chooser. Works when
+  // Chromium's persistent Web Bluetooth permissions are available and the
+  // strap is in range; quietly returns false otherwise.
+  async function tryKnownStrap() {
+    try {
+      if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return false;
+      var devices = await navigator.bluetooth.getDevices();
+      var strap = devices.find(function (d) { return /whoop/i.test(d.name || ''); });
+      if (!strap) return false;
+      await subscribeStrap(strap);
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
+  async function connectStrap(quiet) {
     if (!bleSupported()) {
-      ble.status = 'error';
-      ble.error = 'Bluetooth is not available in this build.';
-      renderHeartRate(state.heartRate);
+      if (!quiet) {
+        ble.status = 'error';
+        ble.error = 'Bluetooth is not available in this build.';
+        renderHeartRate(state.heartRate);
+      }
       return;
     }
     ble.status = 'scanning';
+    ble.quiet = !!quiet;
     ble.error = null;
     renderHeartRate(state.heartRate);
     try {
       var device = await navigator.bluetooth.requestDevice({
         filters: [{ services: ['heart_rate'] }],
+        optionalServices: ['battery_service', 'device_information'],
       });
-      ble.device = device;
-      device.addEventListener('gattserverdisconnected', onStrapDisconnected);
-      var server = await device.gatt.connect();
-      var service = await server.getPrimaryService('heart_rate');
-      var characteristic = await service.getCharacteristic('heart_rate_measurement');
-      await characteristic.startNotifications();
-      characteristic.addEventListener('characteristicvaluechanged', function (e) {
-        onStrapSample(parseHeartRateMeasurement(e.target.value));
-      });
-      ble.status = 'connected';
-      if (!bleFlushTimer) bleFlushTimer = setInterval(flushStrapSamples, 10000);
-      renderHeartRate(state.heartRate);
+      await subscribeStrap(device);
     } catch (err) {
-      ble.status = 'error';
-      ble.error = (err && err.name === 'NotFoundError')
-        ? 'No strap found. In the WHOOP app, open your device settings and turn on Broadcast Heart Rate, then try again.'
-        : 'Bluetooth connection failed: ' + ((err && err.message) || err);
+      if (quiet) {
+        // Silent attempt: the strap is simply not around; no error state.
+        ble.status = 'off';
+        ble.error = null;
+      } else {
+        ble.status = 'error';
+        ble.error = (err && err.name === 'NotFoundError')
+          ? 'No strap found. In the WHOOP app, open your device settings and turn on Broadcast Heart Rate, then try again.'
+          : 'Bluetooth connection failed: ' + ((err && err.message) || err);
+      }
       ble.device = null;
-      renderHeartRate(state.heartRate);
+      if (state.activeView === 'health' || !quiet) renderHeartRate(state.heartRate);
     }
   }
+
+  // Called by the main process (with a synthetic user gesture) on launch,
+  // on wake, and every few minutes while auto-connect is enabled.
+  window.__tryStrapConnect = async function (quiet) {
+    if (ble.status === 'connected' || ble.status === 'scanning') return;
+    if (await tryKnownStrap()) return;
+    await connectStrap(quiet !== false);
+  };
 
   function disconnectStrap() {
     try {
@@ -1904,6 +2064,199 @@
       }
     } catch (err) { /* fall through */ }
     onStrapDisconnected();
+  }
+
+  /* ---------------- live workout sessions ---------------- */
+
+  function startWorkout() {
+    if (ble.status !== 'connected') return;
+    state.workout = {
+      active: true,
+      startedAt: Date.now(),
+      lastTickAt: Date.now(),
+      zoneSec: {},
+      kcal: 0,
+      maxHr: null,
+      hrSum: 0,
+      hrSec: 0,
+      recent: [], // last 40 s of beats, for the stop-peak
+      hrrPending: null,
+    };
+    renderHeartRate(state.heartRate);
+  }
+
+  function stopWorkout() {
+    var w = state.workout;
+    if (!w || !w.active) return;
+    w.active = false;
+    w.endedAt = Date.now();
+    // Peak near the stop: max over the last 40 s of effort.
+    var stopPeak = w.recent.length
+      ? Math.max.apply(null, w.recent.map(function (x) { return x[1]; }))
+      : (isNum(ble.bpm) ? ble.bpm : null);
+    w.hrrPending = { stopPeak: stopPeak, resolveAt: Date.now() + 60000 };
+    renderHeartRate(state.heartRate);
+    showToast('Workout stopped — measuring 60s heart-rate recovery…');
+    setTimeout(function () { finalizeWorkout(); }, 60500);
+  }
+
+  function finalizeWorkout() {
+    var w = state.workout;
+    if (!w || w.active || !w.hrrPending) return;
+    var pending = w.hrrPending;
+    w.hrrPending = null;
+    var freshBpm = (ble.lastAt && Date.now() - ble.lastAt < 10000) ? ble.bpm : null;
+    var hrr60 = (isNum(pending.stopPeak) && isNum(freshBpm) && pending.stopPeak > freshBpm)
+      ? pending.stopPeak - freshBpm
+      : null;
+    var durationMin = Math.max(0.1, (w.endedAt - w.startedAt) / 60000);
+    var zonesMin = {};
+    Object.keys(w.zoneSec).forEach(function (k) { zonesMin[k] = Number((w.zoneSec[k] / 60).toFixed(1)); });
+    var session = {
+      startedAt: new Date(w.startedAt).toISOString(),
+      endedAt: new Date(w.endedAt).toISOString(),
+      durationMin: Number(durationMin.toFixed(1)),
+      avgHr: w.hrSec > 0 ? Math.round(w.hrSum / w.hrSec) : null,
+      maxHr: w.maxHr,
+      kcal: Math.round(w.kcal),
+      approxStrain: approxStrainOf(w.zoneSec),
+      zonesMin: zonesMin,
+      hrr60: hrr60,
+    };
+    state.workout = null;
+    callApi('addStrapSession', [session], function () { return { added: true }; });
+    if (state.heartRate) state.heartRate.lastSession = session;
+    showToast(hrr60 != null
+      ? 'Workout saved — HRR60 ' + hrr60 + ' bpm'
+      : 'Workout saved');
+    if (state.activeView === 'health') renderHeartRate(state.heartRate);
+  }
+
+  function updateWorkoutFastPath() {
+    var w = state.workout;
+    if (!w || !w.active) return;
+    var dur = document.getElementById('wo-dur');
+    if (!dur) return;
+    var sec = Math.floor((Date.now() - w.startedAt) / 1000);
+    dur.textContent = Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0');
+    var kcalEl = document.getElementById('wo-kcal');
+    if (kcalEl) kcalEl.textContent = fmtInt(Math.round(w.kcal));
+    var strainEl = document.getElementById('wo-strain');
+    if (strainEl) strainEl.textContent = fmt(approxStrainOf(w.zoneSec), 1);
+    var peakEl = document.getElementById('wo-peak');
+    if (peakEl) peakEl.textContent = fmt(w.maxHr);
+    var avgEl = document.getElementById('wo-avg');
+    if (avgEl) avgEl.textContent = w.hrSec > 0 ? fmt(Math.round(w.hrSum / w.hrSec)) : '--';
+  }
+
+  function workoutBlockHTML() {
+    var w = state.workout;
+    if (w && w.active) {
+      var totalSec = Object.keys(w.zoneSec).reduce(function (a, k) { return a + w.zoneSec[k]; }, 0);
+      var bars = HR_ZONE_BANDS.map(function (band, i) {
+        var v = w.zoneSec['z' + (i + 1)] || 0;
+        if (v <= 0 || totalSec <= 0) return '';
+        return '<div style="flex:' + v + ' 0 0%;background:' + band.color + '"></div>';
+      }).join('');
+      var sec = Math.floor((Date.now() - w.startedAt) / 1000);
+      return (
+        '<div class="wo-panel">' +
+        '<div class="wo-stats">' +
+        '<div class="hr-stat"><span class="hr-stat-label">Duration</span><span class="hr-stat-value" id="wo-dur">' +
+        Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0') + '</span></div>' +
+        '<div class="hr-stat"><span class="hr-stat-label">Avg HR</span><span class="hr-stat-value" id="wo-avg">' +
+        (w.hrSec > 0 ? fmt(Math.round(w.hrSum / w.hrSec)) : '--') + '</span></div>' +
+        '<div class="hr-stat"><span class="hr-stat-label">Peak</span><span class="hr-stat-value" id="wo-peak" style="color:' + C.red + '">' + fmt(w.maxHr) + '</span></div>' +
+        '<div class="hr-stat"><span class="hr-stat-label">Calories</span><span class="hr-stat-value" id="wo-kcal">' + fmtInt(Math.round(w.kcal)) + '</span></div>' +
+        '<div class="hr-stat"><span class="hr-stat-label">Strain (approx)</span><span class="hr-stat-value" id="wo-strain" style="color:' + C.strain + '">' + fmt(approxStrainOf(w.zoneSec), 1) + '</span></div>' +
+        '<button type="button" id="wo-stop-btn" class="hr-live-btn wo-stop">Stop workout</button>' +
+        '</div>' +
+        (bars ? '<div class="breakdown-bar wo-zonebar">' + bars + '</div>' : '') +
+        '</div>'
+      );
+    }
+    if (w && !w.active && w.hrrPending) {
+      var left = Math.max(0, Math.ceil((w.hrrPending.resolveAt - Date.now()) / 1000));
+      return '<div class="wo-panel"><p class="hr-foot">Measuring heart-rate recovery&hellip; ' +
+        left + 's — keep the strap on and stay still.</p></div>';
+    }
+    var lastSession = state.heartRate && state.heartRate.lastSession;
+    var pieces = '';
+    if (ble.status === 'connected') {
+      pieces += '<button type="button" id="wo-start-btn" class="hr-live-btn wo-start">Start workout</button>';
+    }
+    if (lastSession) {
+      pieces += '<span class="hr-foot wo-last">Last session: ' +
+        fmt(lastSession.durationMin, 0) + ' min &middot; avg ' + fmt(lastSession.avgHr) +
+        ' &middot; max ' + fmt(lastSession.maxHr) + ' &middot; ' + fmtInt(lastSession.kcal) + ' cal &middot; ~' +
+        fmt(lastSession.approxStrain, 1) + ' strain' +
+        (isNum(lastSession.hrr60) ? ' &middot; HRR60 <b>' + lastSession.hrr60 + '</b> bpm' : '') +
+        '</span>';
+    }
+    return pieces ? '<div class="wo-panel wo-idle">' + pieces + '</div>' : '';
+  }
+
+  /* ---------------- guided breathing ---------------- */
+
+  var breath = { open: false, startedAt: 0, startHr: null, startRmssd: null, timer: null };
+
+  function ensureBreathOverlay() {
+    if (document.getElementById('breath-overlay')) return;
+    var el = document.createElement('div');
+    el.id = 'breath-overlay';
+    el.hidden = true;
+    el.innerHTML =
+      '<div class="breath-panel">' +
+      '<p class="micro-label">Guided breathing</p>' +
+      '<div class="breath-circle-wrap"><div class="breath-circle" id="breath-circle"></div>' +
+      '<span class="breath-phase" id="breath-phase">Inhale</span></div>' +
+      '<p class="breath-live" id="breath-live">--</p>' +
+      '<p class="hr-foot">5.5 seconds in, 5.5 seconds out. A few minutes is plenty.</p>' +
+      '<button type="button" id="breath-close" class="hr-live-btn">End session</button>' +
+      '</div>';
+    document.body.appendChild(el);
+    el.addEventListener('click', function (e) {
+      if (e.target === el || e.target.closest('#breath-close')) closeBreathing();
+    });
+  }
+
+  function openBreathing() {
+    ensureBreathOverlay();
+    breath.open = true;
+    breath.startedAt = Date.now();
+    breath.startHr = isNum(ble.bpm) ? ble.bpm : null;
+    breath.startRmssd = ble.rmssd;
+    document.getElementById('breath-overlay').hidden = false;
+    breath.timer = setInterval(function () {
+      var t = (Date.now() - breath.startedAt) % 11000;
+      var phaseEl = document.getElementById('breath-phase');
+      if (phaseEl) phaseEl.textContent = t < 5500 ? 'Inhale' : 'Exhale';
+      var liveEl = document.getElementById('breath-live');
+      if (liveEl) {
+        var fresh = ble.lastAt && Date.now() - ble.lastAt < 10000;
+        liveEl.innerHTML = fresh
+          ? '<b>' + fmt(ble.bpm) + '</b> bpm' + (isNum(ble.rmssd) ? ' &nbsp;&middot;&nbsp; HRV ' + ble.rmssd + ' ms' : '')
+          : 'connect your strap to see your pulse respond';
+      }
+    }, 250);
+  }
+
+  function closeBreathing() {
+    if (!breath.open) return;
+    breath.open = false;
+    clearInterval(breath.timer);
+    var el = document.getElementById('breath-overlay');
+    if (el) el.hidden = true;
+    var elapsed = (Date.now() - breath.startedAt) / 1000;
+    var fresh = ble.lastAt && Date.now() - ble.lastAt < 10000;
+    if (elapsed >= 60 && isNum(breath.startHr) && fresh && isNum(ble.bpm)) {
+      var delta = breath.startHr - ble.bpm;
+      var msg = 'Breathing done: ' + breath.startHr + ' → ' + ble.bpm + ' bpm';
+      if (isNum(breath.startRmssd) && isNum(ble.rmssd)) {
+        msg += ', HRV ' + breath.startRmssd + ' → ' + ble.rmssd + ' ms';
+      }
+      showToast(msg);
+    }
   }
 
   /* ---------------- live heart rate (health hero) ---------------- */
@@ -1984,6 +2337,7 @@
       '<div class="card-head hr-head"><span class="micro-label">Heart Rate &mdash; today</span>' +
       '<span class="hr-head-right">' +
       (noteHTML ? '<span class="card-head-note">' + noteHTML + '</span>' : '') +
+      '<button type="button" id="hr-breathe-btn" class="hr-live-btn">Breathe</button>' +
       strapBtn +
       liveBtn +
       '</span></div>';
@@ -2013,6 +2367,11 @@
           ? '<div class="hr-stat"><span class="hr-stat-label">Strap range</span>' +
             '<span class="hr-stat-value">' + fmt(hr.measured.rangeBpm.lo) + '&ndash;' +
             fmt(hr.measured.rangeBpm.hi) + '</span></div>'
+          : '') +
+        (isNum(ble.rmssd)
+          ? '<div class="hr-stat"><span class="hr-stat-label">Live HRV &middot; RMSSD</span>' +
+            '<span class="hr-stat-value" style="color:' + C.sleep + '">' + ble.rmssd +
+            '<span class="unit">ms</span></span></div>'
           : '') +
         '</div>' +
         '</div>';
@@ -2070,19 +2429,26 @@
         '<p class="hr-warmup-title">Connected &mdash; waiting for the first beats</p>' +
         '<p class="hr-warmup-body">The strip draws as broadcasts arrive, about one per second.</p>' +
         '</div>';
-    } else if (pts.length >= 2) {
-      var labels = pts.map(function (p) { return p.t; });
-      var values = pts.map(function (p) { return p.bpm; });
+    } else if ((hr.dayPoints || pts).length >= 2) {
+      var dayPts = (hr.dayPoints && hr.dayPoints.length >= 2) ? hr.dayPoints : pts;
+      var anyMeasured = dayPts.some(function (p) { return p.source === 'measured'; });
+      var labels = dayPts.map(function (p) { return p.t; });
+      var values = dayPts.map(function (p) { return p.bpm; });
       var avg = avgOf(values, 0);
       body = chartSlot(function (w) {
         return lineChartSVG({
           width: w, height: 300, dates: labels, values: values, avg: avg,
           color: C.red, lineColor: C.red,
-          dotColors: values.map(function (v) { return hrZoneFor(v, maxHr).color; }),
+          dotColors: dayPts.map(function (p) {
+            return p.source === 'measured' ? '#ffffff' : hrZoneFor(p.bpm, maxHr).color;
+          }),
           fmtTick: function (t) { return fmt(t); },
           xFormat: hrClock,
         });
-      }, 900);
+      }, 900) +
+      (anyMeasured
+        ? '<p class="hr-foot">White dots are measured by your strap; colored dots are estimated from energy burn.</p>'
+        : '');
     } else {
       body =
         '<div class="hr-warmup">' +
@@ -2124,14 +2490,27 @@
         fmt(hr.model.rmse, 0) + ' bpm). Day average, day max and activity figures are measured by WHOOP.</p>'
       : '';
 
+    var infoSrc = ble.info || hr.strapInfo;
+    var strapInfoLine = '';
+    if (infoSrc && (strapOn || infoSrc.battery != null)) {
+      var infoBits = [];
+      if (infoSrc.name) infoBits.push(escapeHTML(infoSrc.name));
+      if (isNum(infoSrc.battery)) infoBits.push('battery ' + infoSrc.battery + '%');
+      if (infoSrc.firmware) infoBits.push('fw ' + escapeHTML(infoSrc.firmware));
+      if (infoSrc.rrSupported != null) {
+        infoBits.push(infoSrc.rrSupported ? 'RR intervals: yes (live HRV on)' : 'RR intervals: not broadcast');
+      }
+      if (infoBits.length) strapInfoLine = '<p class="hr-foot hr-strap-info">' + infoBits.join(' &middot; ') + '</p>';
+    }
+
     var bleNote = '';
     if (ble.status === 'error' && ble.error) {
       bleNote = '<p class="hr-foot hr-ble-error">' + escapeHTML(ble.error) + '</p>';
-    } else if (ble.status === 'scanning') {
+    } else if (ble.status === 'scanning' && !ble.quiet) {
       bleNote = '<p class="hr-foot">Scanning for your strap&hellip; make sure Broadcast Heart Rate is on in the WHOOP app (Device Settings). The scan gives up after 25 seconds.</p>';
     }
 
-    el.innerHTML = head + bleNote + readout + body + acts + liveNote + foot;
+    el.innerHTML = head + bleNote + readout + workoutBlockHTML() + body + acts + strapInfoLine + liveNote + foot;
     fillCharts(el);
   }
 
@@ -2533,7 +2912,7 @@
   async function renderSettings() {
     var res = await callApi('getSettings', [], mockGetSettings);
     state.settings = (res && !res.error) ? res
-      : { launchAtLogin: false, notificationsEnabled: true, morningHour: 8, autoRefreshMins: 10 };
+      : { launchAtLogin: false, notificationsEnabled: true, morningHour: 8, autoRefreshMins: 10, autoConnectStrap: true, restingAlertEnabled: false, restingAlertBpm: 100 };
     var el = document.getElementById('settings-body');
     if (!el) return;
     var s = state.settings;
@@ -2564,6 +2943,21 @@
       'placeholder="Blank = use the signed-in claude CLI" value="' + escapeHTML(s.anthropicApiKey || '') +
       '" data-key="anthropicApiKey" />' +
       '<span class="settings-hint">Coach runs Claude Sonnet 5 (medium effort) on your own account.</span>' +
+      '</div>' +
+      '<div class="settings-row">' +
+      '<span class="settings-label">Auto-connect strap<small>Reconnect whenever your WHOOP is in Bluetooth range</small></span>' +
+      '<button type="button" class="settings-toggle' + (s.autoConnectStrap !== false ? ' on' : '') +
+      '" data-key="autoConnectStrap" role="switch" aria-checked="' + (s.autoConnectStrap !== false) + '"><span></span></button>' +
+      '</div>' +
+      '<div class="settings-row">' +
+      '<span class="settings-label">Resting heart-rate alert<small>Notify when 3-min median exceeds the threshold outside workouts</small></span>' +
+      '<button type="button" class="settings-toggle' + (s.restingAlertEnabled ? ' on' : '') +
+      '" data-key="restingAlertEnabled" role="switch" aria-checked="' + !!s.restingAlertEnabled + '"><span></span></button>' +
+      '</div>' +
+      '<div class="settings-row">' +
+      '<label class="settings-label" for="setting-alert-bpm">Alert threshold (bpm)</label>' +
+      '<input type="number" id="setting-alert-bpm" class="settings-number" min="60" max="200" step="5" value="' +
+      fmtInt(s.restingAlertBpm || 100) + '" data-key="restingAlertBpm" />' +
       '</div>';
   }
 
@@ -2778,10 +3172,13 @@
     var viewHealth = document.getElementById('view-health');
     if (viewHealth) {
       viewHealth.addEventListener('click', async function (e) {
+        if (e.target.closest('#wo-start-btn')) { startWorkout(); return; }
+        if (e.target.closest('#wo-stop-btn')) { stopWorkout(); return; }
+        if (e.target.closest('#hr-breathe-btn')) { openBreathing(); return; }
         var strapBtnEl = e.target.closest('#hr-strap-btn');
         if (strapBtnEl) {
           if (ble.status === 'connected') disconnectStrap();
-          else connectStrap();
+          else connectStrap(false);
           return;
         }
         var btn = e.target.closest('#hr-live-btn');
