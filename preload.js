@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('whoop', {
   getBackfillStatus: () => ipcRenderer.invoke('whoop:getBackfillStatus'),
   getHeartRate: () => ipcRenderer.invoke('whoop:getHeartRate'),
   setLiveHr: (payload) => ipcRenderer.invoke('whoop:setLiveHr', payload),
+  recordStrapSamples: (batch) => ipcRenderer.invoke('whoop:recordStrapSamples', batch),
 
   getAnalytics: (opts) => ipcRenderer.invoke('whoop:getAnalytics', opts),
 

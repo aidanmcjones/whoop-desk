@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Whoop+ connects to your WHOOP strap's Bluetooth heart-rate broadcast to show your live heart rate.</string>
+  <key>NSBluetoothPeripheralUsageDescription</key>
+  <string>Whoop+ connects to your WHOOP strap's Bluetooth heart-rate broadcast to show your live heart rate.</string>
+</dict>
+</plist>

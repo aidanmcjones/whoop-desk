@@ -2152,3 +2152,19 @@ button {
 @media (prefers-reduced-motion: reduce) {
   .hr-live-btn.on .hr-live-btn-dot { animation: none; }
 }
+
+/* strap (Bluetooth) states */
+.hr-strap-btn.on {
+  border-color: rgba(61, 220, 132, 0.55);
+  background: rgba(61, 220, 132, 0.13);
+  color: #d6ffe9;
+}
+
+.hr-strap-btn.on .hr-live-btn-dot {
+  background: var(--green);
+  animation: hr-beat 1.15s ease-in-out infinite;
+}
+
+.hr-ble-error {
+  color: var(--amber);
+}

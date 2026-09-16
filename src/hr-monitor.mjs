@@ -190,7 +190,7 @@ export function workoutPoints(workouts, date) {
     }));
 }
 
-export function buildSeries({ samples, cycle, workouts, date, timeZone, model }) {
+export function buildSeries({ samples, measured, cycle, workouts, date, timeZone, model }) {
   const tz = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const today = date || localDateOf(new Date().toISOString(), tz);
   const todays = (samples || []).filter((s) => localDateOf(s.t, tz) === today);
@@ -201,6 +201,15 @@ export function buildSeries({ samples, cycle, workouts, date, timeZone, model })
   const newest = todays.length ? todays[todays.length - 1] : null;
   const latest = intervals.length ? intervals[intervals.length - 1] : null;
   const bpms = intervals.map((i) => i.bpm);
+
+  // Measured (strap broadcast) readings for the same local day, plus the
+  // last 20 minutes at full resolution so a reopened window can restore its
+  // live strip.
+  const measuredToday = (measured || []).filter((m) => localDateOf(m.t, tz) === today);
+  const recentCutoff = Date.now() - 20 * 60000;
+  const measuredRecent = measuredToday.filter((m) => new Date(m.t).getTime() >= recentCutoff);
+  const mLatest = measuredToday.length ? measuredToday[measuredToday.length - 1] : null;
+  const mBpms = measuredToday.map((m) => m.bpm);
 
   return {
     // Estimated bpm per polling interval, from energy burned.
@@ -217,6 +226,13 @@ export function buildSeries({ samples, cycle, workouts, date, timeZone, model })
     sampleCount: todays.length,
     lastSampleAt: newest ? newest.t : null,
     date: today,
+    measured: {
+      count: measuredToday.length,
+      latestBpm: mLatest ? mLatest.bpm : null,
+      latestAt: mLatest ? mLatest.t : null,
+      rangeBpm: mBpms.length ? { lo: Math.min(...mBpms), hi: Math.max(...mBpms) } : null,
+      recent: measuredRecent,
+    },
     // Published so the UI can state the estimate's accuracy rather than
     // implying the line is measured.
     model: model
@@ -233,6 +249,7 @@ export async function initHrMonitor({ dataDir } = {}) {
   if (!dataDir) throw new Error('initHrMonitor requires a dataDir');
   const filePath = path.join(dataDir, 'hr-samples.json');
   let samples = [];
+  let measured = []; // BLE strap broadcast: [{ t, bpm }], truly measured
   let model = null;
   let queue = Promise.resolve();
 
@@ -240,6 +257,7 @@ export async function initHrMonitor({ dataDir } = {}) {
     const raw = await fsp.readFile(filePath, 'utf8');
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed?.samples)) samples = parsed.samples;
+    if (Array.isArray(parsed?.measured)) measured = parsed.measured;
     if (parsed?.model) model = parsed.model;
   } catch (err) {
     if (err && err.code !== 'ENOENT') console.error('hr-monitor: could not read store:', err);
@@ -248,12 +266,13 @@ export async function initHrMonitor({ dataDir } = {}) {
   function prune() {
     const cutoff = Date.now() - RETENTION_DAYS * 86400000;
     samples = samples.filter((s) => new Date(s.t).getTime() >= cutoff);
+    measured = measured.filter((s) => new Date(s.t).getTime() >= cutoff);
   }
 
   async function persist() {
     await fsp.mkdir(dataDir, { recursive: true });
     const tmp = path.join(dataDir, `.hr-samples.json.${process.pid}.${Date.now()}.tmp`);
-    await fsp.writeFile(tmp, JSON.stringify({ samples, model }, null, 2), 'utf8');
+    await fsp.writeFile(tmp, JSON.stringify({ samples, measured, model }, null, 2), 'utf8');
     await fsp.rename(tmp, filePath);
   }
 
@@ -299,7 +318,34 @@ export async function initHrMonitor({ dataDir } = {}) {
     },
 
     getSeries({ cycle, workouts, date, timeZone } = {}) {
-      return buildSeries({ samples: samples.slice(), cycle, workouts, date, timeZone, model });
+      return buildSeries({
+        samples: samples.slice(),
+        measured: measured.slice(),
+        cycle, workouts, date, timeZone, model,
+      });
+    },
+
+    // Batch of truly measured readings from the strap's Bluetooth heart-rate
+    // broadcast. Deduped on timestamp, clamped to plausible bpm, appended in
+    // time order.
+    recordMeasuredBatch(batch) {
+      return enqueue(async () => {
+        const clean = (batch || [])
+          .filter((x) => x && x.t && Number.isFinite(x.bpm)
+            && x.bpm >= MIN_PLAUSIBLE_BPM && x.bpm <= MAX_PLAUSIBLE_BPM
+            && !Number.isNaN(new Date(x.t).getTime()))
+          .map((x) => ({ t: x.t, bpm: Math.round(x.bpm) }));
+        if (!clean.length) return { added: 0 };
+        const lastT = measured.length ? new Date(measured[measured.length - 1].t).getTime() : -Infinity;
+        const fresh = clean
+          .filter((x) => new Date(x.t).getTime() > lastT)
+          .sort((a, b) => new Date(a.t) - new Date(b.t));
+        if (!fresh.length) return { added: 0 };
+        measured.push(...fresh);
+        prune();
+        await persist();
+        return { added: fresh.length };
+      });
     },
 
     // Installs a freshly fitted model and persists it, so a restart keeps
