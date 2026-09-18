@@ -1142,7 +1142,7 @@
         '</span>';
     } else if (scanning) {
       left = '<span class="strap-strip-meta">Scanning for your strap&hellip;</span>';
-    } else if (ble.error && !ble.quiet) {
+    } else if (ble.error && !ble.quiet && ble.error.indexOf('quiet: ') !== 0) {
       left = '<span class="strap-strip-meta strap-strip-error">' + escapeHTML(ble.error) + '</span>';
     } else {
       var info = ble.info || (state.heartRate && state.heartRate.strapInfo);
@@ -1853,6 +1853,9 @@
     scanSeq: 0,
     rrBuf: [],      // last ~150 RR intervals (ms) for live RMSSD
     rrSeen: false,
+    granted: null,      // BluetoothDevice kept after the one allowed scan
+    reconnectTimer: null,
+    reconnectTries: 0,
     rmssd: null,
     info: null,     // probe: battery / firmware / model
   };
@@ -1923,6 +1926,28 @@
     if (bleFlushTimer) { clearInterval(bleFlushTimer); bleFlushTimer = null; }
     flushStrapSamples();
     renderStrapSurfaces();
+    // The strap dropped (out of range, or it stopped broadcasting). Retry the
+    // GATT link on the SAME granted device. This needs no scan and no
+    // chooser, which is what makes it safe to repeat forever.
+    scheduleStrapReconnect();
+  }
+
+  function scheduleStrapReconnect() {
+    if (!ble.granted) return;
+    if (ble.reconnectTimer) return;
+    // Back off from 5s to 60s, then hold at 60s indefinitely so the strap is
+    // picked up within a minute of coming back into range.
+    var delay = Math.min(60000, 5000 * Math.pow(1.6, Math.min(ble.reconnectTries, 8)));
+    ble.reconnectTimer = setTimeout(async function () {
+      ble.reconnectTimer = null;
+      if (ble.status === 'connected') return;
+      ble.reconnectTries++;
+      try {
+        await subscribeStrap(ble.granted);
+      } catch (err) {
+        scheduleStrapReconnect();
+      }
+    }, delay);
   }
 
   function onStrapSample(reading) {
@@ -2000,6 +2025,8 @@
 
   async function subscribeStrap(device) {
     ble.device = device;
+    ble.granted = device; // keep for scan-free reconnects
+    ble.reconnectTries = 0;
     device.addEventListener('gattserverdisconnected', onStrapDisconnected);
     var server = await device.gatt.connect();
     var service = await server.getPrimaryService('heart_rate');
@@ -2048,16 +2075,17 @@
   // Chromium's persistent Web Bluetooth permissions are available and the
   // strap is in range; quietly returns false otherwise.
   async function tryKnownStrap() {
-    try {
-      if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return false;
-      var devices = await navigator.bluetooth.getDevices();
-      var strap = devices.find(function (d) { return /whoop/i.test(d.name || ''); });
-      if (!strap) return false;
-      await subscribeStrap(strap);
-      return true;
-    } catch (err) {
-      return false;
+    // Reconnect to the device already granted in this session: no scan.
+    if (ble.granted) {
+      try {
+        await subscribeStrap(ble.granted);
+        return true;
+      } catch (err) {
+        scheduleStrapReconnect();
+        return true; // owned by the retry loop; do not fall through to a scan
+      }
     }
+    return false;
   }
 
   async function connectStrap(quiet) {
@@ -2069,6 +2097,8 @@
       }
       return;
     }
+    if (ble.reconnectTimer) { clearTimeout(ble.reconnectTimer); ble.reconnectTimer = null; }
+    ble.reconnectTries = 0;
     ble.status = 'scanning';
     ble.quiet = !!quiet;
     ble.error = null;
@@ -2094,9 +2124,9 @@
       await subscribeStrap(device);
     } catch (err) {
       if (quiet) {
-        // Silent attempt: the strap is simply not around; no error state.
+        // Silent attempt: no error UI, but keep the reason for diagnostics.
         ble.status = 'off';
-        ble.error = null;
+        ble.error = 'quiet: ' + ((err && err.name) || 'Error') + ' ' + ((err && err.message) || '').slice(0, 120);
       } else {
         ble.status = 'error';
         ble.error = (err && err.name === 'NotFoundError')
@@ -2111,14 +2141,40 @@
 
   // Called by the main process (with a synthetic user gesture) on launch,
   // on wake, and every few minutes while auto-connect is enabled.
-  window.__tryStrapConnect = async function (quiet) {
-    if (ble.status === 'connected') return;
-    if (ble.status === 'scanning' && Date.now() - ble.scanStartedAt < 40000) return;
-    if (await tryKnownStrap()) return;
-    await connectStrap(quiet !== false);
+  window.__strapState = function () {
+    return {
+      status: ble.status,
+      quiet: ble.quiet,
+      error: ble.error,
+      scanStartedAgoMs: ble.scanStartedAt ? Date.now() - ble.scanStartedAt : null,
+      lastBeatAgoMs: ble.lastAt ? Date.now() - ble.lastAt : null,
+      device: ble.device ? ble.device.name || true : null,
+      bpm: ble.bpm,
+    };
   };
 
+  // Reconnect heartbeat, owned entirely by the renderer. It only ever calls
+  // gatt.connect() on a device the user already granted with a real click, so
+  // it never scans and never needs a synthetic user gesture — the two things
+  // that crashed Chromium's Bluetooth stack here.
+  function startStrapWatch() {
+    setInterval(function () {
+      if (ble.status === 'connected' || !ble.granted) return;
+      if (ble.reconnectTimer) return;
+      ble.reconnectTries = 0; // a steady 5s probe once backoff has run out
+      scheduleStrapReconnect();
+    }, 30000);
+    window.addEventListener('focus', function () {
+      if (ble.status !== 'connected' && ble.granted && !ble.reconnectTimer) {
+        ble.reconnectTries = 0;
+        scheduleStrapReconnect();
+      }
+    });
+  }
+
   function disconnectStrap() {
+    ble.granted = null; // user asked to stop; no automatic reconnects
+    if (ble.reconnectTimer) { clearTimeout(ble.reconnectTimer); ble.reconnectTimer = null; }
     try {
       if (ble.device && ble.device.gatt && ble.device.gatt.connected) {
         ble.device.gatt.disconnect();
@@ -3295,6 +3351,7 @@
     if (window.whoop && typeof window.whoop.onUpdated === 'function') {
       window.whoop.onUpdated(function (freshData) { applyUpdate(freshData); });
     }
+    startStrapWatch();
     if (window.whoop && typeof window.whoop.onHeartRate === 'function') {
       window.whoop.onHeartRate(function (hr) {
         state.heartRate = hr;
