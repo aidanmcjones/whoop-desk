@@ -2153,6 +2153,25 @@ button {
   .hr-live-btn.on .hr-live-btn-dot { animation: none; }
 }
 
+/* strap state pill — status only; the connection is automatic */
+.strap-strip-state {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--label);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.strap-strip-state.on {
+  border-color: rgba(61, 220, 132, 0.55);
+  background: rgba(61, 220, 132, 0.13);
+  color: #d6ffe9;
+}
+
 /* strap (Bluetooth) states */
 .hr-strap-btn.on {
   border-color: rgba(61, 220, 132, 0.55);

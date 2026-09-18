@@ -436,6 +436,10 @@ export async function initHrMonitor({ dataDir } = {}) {
       });
     },
 
+    getStrapInfo() {
+      return strapInfo ? { ...strapInfo } : null;
+    },
+
     listMeasured() {
       return measured.slice();
     },

@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('whoop', {
   recordStrapSamples: (batch) => ipcRenderer.invoke('whoop:recordStrapSamples', batch),
   addStrapSession: (session) => ipcRenderer.invoke('whoop:addStrapSession', session),
   setStrapInfo: (info) => ipcRenderer.invoke('whoop:setStrapInfo', info),
-  sendStrapBeat: (payload) => ipcRenderer.send('whoop:strapBeat', payload),
+  setStrapWorkout: (active) => ipcRenderer.send('whoop:strapWorkout', active),
 
   getAnalytics: (opts) => ipcRenderer.invoke('whoop:getAnalytics', opts),
 
@@ -31,6 +31,11 @@ contextBridge.exposeInMainWorld('whoop', {
     const listener = (_event, progress) => cb(progress);
     ipcRenderer.on('whoop:backfillProgress', listener);
     return () => ipcRenderer.removeListener('whoop:backfillProgress', listener);
+  },
+  onStrap: (cb) => {
+    const listener = (_event, live) => cb(live);
+    ipcRenderer.on('whoop:strap', listener);
+    return () => ipcRenderer.removeListener('whoop:strap', listener);
   },
   onHeartRate: (cb) => {
     const listener = (_event, progress) => cb(progress);

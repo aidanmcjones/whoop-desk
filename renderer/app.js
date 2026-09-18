@@ -1119,11 +1119,30 @@
 
   /* ---------------- overview strap strip ---------------- */
 
+  // Plain-language status for a connection nobody has to manage. "Looking for
+  // your strap" covers both scanning and connecting, since the distinction
+  // only matters to the helper.
+  function strapStatusText() {
+    switch (ble.status) {
+      case 'starting':
+      case 'scanning':
+      case 'connecting':
+        return 'Looking for your strap…';
+      case 'off':
+        return 'Bluetooth is off';
+      case 'unauthorized':
+        return 'Bluetooth permission needed';
+      case 'unavailable':
+        return 'Strap support unavailable in this build';
+      default:
+        return 'Strap out of range';
+    }
+  }
+
   function renderOverviewStrap() {
     var el = document.getElementById('overview-strap-card');
     if (!el) return;
     var connected = ble.status === 'connected';
-    var scanning = ble.status === 'scanning' && !ble.quiet;
     var maxHr = profileMaxHr();
     var zone = hrZoneFor(ble.bpm, maxHr);
 
@@ -1140,24 +1159,17 @@
         '<span class="strap-strip-meta">measured &middot; ' + zone.label +
         (isNum(ble.rmssd) ? ' &middot; HRV ' + ble.rmssd + ' ms' : '') +
         '</span>';
-    } else if (scanning) {
-      left = '<span class="strap-strip-meta">Scanning for your strap&hellip;</span>';
-    } else if (ble.error && !ble.quiet && ble.error.indexOf('quiet: ') !== 0) {
-      left = '<span class="strap-strip-meta strap-strip-error">' + escapeHTML(ble.error) + '</span>';
     } else {
       var info = ble.info || (state.heartRate && state.heartRate.strapInfo);
-      left = '<span class="strap-strip-meta">Strap not connected' +
+      left = '<span class="strap-strip-meta">' + escapeHTML(strapStatusText()) +
         (info && isNum(info.battery) ? ' &middot; last battery ' + info.battery + '%' : '') + '</span>';
     }
 
     el.innerHTML =
       '<span class="micro-label">Live HR</span>' +
       '<span class="strap-strip-left">' + left + '</span>' +
-      '<button type="button" id="ov-strap-btn" class="hr-live-btn hr-strap-btn' +
-      (connected ? ' on' : '') + '"' + (scanning ? ' disabled' : '') + '>' +
-      '<span class="hr-live-btn-dot" aria-hidden="true"></span>' +
-      (connected ? 'Strap live' : scanning ? 'Scanning&hellip;' : 'Connect strap') +
-      '</button>';
+      '<span class="strap-strip-state' + (connected ? ' on' : '') + '">' +
+      (connected ? 'Strap live' : 'Auto') + '</span>';
   }
 
   // Every strap state change repaints whichever strap surfaces are on screen.
@@ -1836,52 +1848,23 @@
 
   /* ---------------- strap Bluetooth (true measured heart rate) ------- */
 
-  // The WHOOP strap broadcasts the standard Bluetooth Heart Rate profile
-  // (service 0x180D) when "Broadcast Heart Rate" is enabled in the WHOOP
-  // app. Reading it here gives real per-second measured bpm — the only
-  // truly live channel; the REST API has none.
+  // The strap connection lives in the main process, which talks to
+  // CoreBluetooth through a native helper (native/hr-bridge.swift). The
+  // renderer is a pure consumer of that stream: it holds no device, starts no
+  // scan and needs no click. Web Bluetooth is deliberately not used — it
+  // cannot connect without a user gesture, which is what forced the old
+  // "Connect strap" button to exist.
   var ble = {
-    status: 'off', // off | scanning | connected | error
+    status: 'starting', // starting | scanning | connecting | connected | disconnected | off | unauthorized | unavailable
     bpm: null,
     lastAt: null,
     buffer: [],    // [msEpoch, bpm], rolling ~20 min
-    pending: [],   // samples not yet persisted to the main process
-    device: null,
     error: null,
-    quiet: false,   // silent auto-connect attempt: no error surfacing
-    scanStartedAt: 0,
-    scanSeq: 0,
-    rrBuf: [],      // last ~150 RR intervals (ms) for live RMSSD
-    rrSeen: false,
-    granted: null,      // BluetoothDevice kept after the one allowed scan
-    reconnectTimer: null,
-    reconnectTries: 0,
+    quiet: true,   // the connection is automatic; never surface it as an error
     rmssd: null,
-    info: null,     // probe: battery / firmware / model
+    info: null,    // battery / firmware / model, from the helper
   };
   var bleRerenderTimer = null;
-  var bleFlushTimer = null;
-
-  function parseHeartRateMeasurement(dataView) {
-    // Standard Heart Rate Measurement (0x2A37) layout, driven by flags:
-    //   bit 0: bpm is uint16 LE (else uint8)
-    //   bit 3: a uint16 Energy Expended field is present (skipped)
-    //   bit 4: one or more uint16 RR intervals follow, unit 1/1024 s
-    var flags = dataView.getUint8(0);
-    var offset = 1;
-    var bpm;
-    if (flags & 0x01) { bpm = dataView.getUint16(offset, true); offset += 2; }
-    else { bpm = dataView.getUint8(offset); offset += 1; }
-    if (flags & 0x08) offset += 2;
-    var rr = [];
-    if (flags & 0x10) {
-      while (offset + 1 < dataView.byteLength) {
-        rr.push(Math.round((dataView.getUint16(offset, true) / 1024) * 1000));
-        offset += 2;
-      }
-    }
-    return { bpm: bpm, rr: rr };
-  }
 
   // Tiny local copies of tested helpers in src/hr-monitor.mjs (the renderer
   // cannot import ESM).
@@ -1910,64 +1893,15 @@
     return Number((21 * (1 - Math.exp(-raw / 200))).toFixed(1));
   }
 
-  function bleSupported() {
-    return !!(navigator.bluetooth && navigator.bluetooth.requestDevice);
-  }
-
-  function flushStrapSamples() {
-    if (!ble.pending.length) return;
-    var batch = ble.pending.splice(0, ble.pending.length);
-    callApi('recordStrapSamples', [batch], function () { return { added: 0 }; });
-  }
-
-  function onStrapDisconnected() {
-    if (ble.status !== 'error') ble.status = 'off';
-    ble.device = null;
-    if (bleFlushTimer) { clearInterval(bleFlushTimer); bleFlushTimer = null; }
-    flushStrapSamples();
-    renderStrapSurfaces();
-    // The strap dropped (out of range, or it stopped broadcasting). Retry the
-    // GATT link on the SAME granted device. This needs no scan and no
-    // chooser, which is what makes it safe to repeat forever.
-    scheduleStrapReconnect();
-  }
-
-  function scheduleStrapReconnect() {
-    if (!ble.granted) return;
-    if (ble.reconnectTimer) return;
-    // Back off from 5s to 60s, then hold at 60s indefinitely so the strap is
-    // picked up within a minute of coming back into range.
-    var delay = Math.min(60000, 5000 * Math.pow(1.6, Math.min(ble.reconnectTries, 8)));
-    ble.reconnectTimer = setTimeout(async function () {
-      ble.reconnectTimer = null;
-      if (ble.status === 'connected') return;
-      ble.reconnectTries++;
-      try {
-        await subscribeStrap(ble.granted);
-      } catch (err) {
-        scheduleStrapReconnect();
-      }
-    }, delay);
-  }
-
   function onStrapSample(reading) {
     var bpm = reading && reading.bpm;
     if (!isNum(bpm) || bpm < 25 || bpm > 240) return;
-    var now = Date.now();
+    var now = isNum(reading.at) ? reading.at : Date.now();
     ble.bpm = bpm;
     ble.lastAt = now;
     ble.buffer.push([now, bpm]);
     var cutoff = now - 20 * 60000;
     while (ble.buffer.length && ble.buffer[0][0] < cutoff) ble.buffer.shift();
-    ble.pending.push({ t: new Date(now).toISOString(), bpm: bpm });
-
-    // RR intervals -> live HRV, when the strap broadcasts them.
-    if (reading.rr && reading.rr.length) {
-      ble.rrSeen = true;
-      ble.rrBuf.push.apply(ble.rrBuf, reading.rr);
-      if (ble.rrBuf.length > 150) ble.rrBuf = ble.rrBuf.slice(-150);
-      ble.rmssd = rmssdOf(ble.rrBuf);
-    }
 
     // Live workout accumulation, one tick per broadcast (~1 s).
     if (state.workout && state.workout.active) {
@@ -1987,16 +1921,8 @@
       updateWorkoutFastPath();
     }
 
-    // Every beat feeds the tray + resting-alert stream in the main process.
-    if (window.whoop && typeof window.whoop.sendStrapBeat === 'function') {
-      window.whoop.sendStrapBeat({
-        t: new Date(now).toISOString(),
-        bpm: bpm,
-        inWorkout: !!(state.workout && state.workout.active),
-      });
-    }
-
-    if (state.activeView !== 'health') return;
+    // Overview shows the live number too, so it must not be excluded here.
+    if (state.activeView !== 'health' && state.activeView !== 'overview') return;
     // Fast path: bump the number/time in place at broadcast rate, redraw the
     // whole card (with its strip chart) at most every 2 s.
     var ovNum = document.getElementById('ov-ble-num');
@@ -2023,165 +1949,45 @@
     return (state.data && state.data.profile && state.data.profile.maxHr) || null;
   }
 
-  async function subscribeStrap(device) {
-    ble.device = device;
-    ble.granted = device; // keep for scan-free reconnects
-    ble.reconnectTries = 0;
-    device.addEventListener('gattserverdisconnected', onStrapDisconnected);
-    var server = await device.gatt.connect();
-    var service = await server.getPrimaryService('heart_rate');
-    var characteristic = await service.getCharacteristic('heart_rate_measurement');
-    await characteristic.startNotifications();
-    characteristic.addEventListener('characteristicvaluechanged', function (e) {
-      onStrapSample(parseHeartRateMeasurement(e.target.value));
-    });
-    ble.status = 'connected';
-    ble.error = null;
-    if (!bleFlushTimer) bleFlushTimer = setInterval(flushStrapSamples, 10000);
-    probeStrap(server, device);
-    renderStrapSurfaces();
-  }
+  // Every strap event from the main process lands here. Beats arrive about
+  // once a second; status changes arrive as they happen.
+  function applyStrapLive(live) {
+    if (!live) return;
+    var prevStatus = ble.status;
+    var prevAt = ble.lastAt;
+    ble.status = live.status || 'off';
+    ble.rmssd = isNum(live.rmssd) ? live.rmssd : ble.rmssd;
+    if (live.info) ble.info = live.info;
 
-  // One-time capability probe per connect: battery, device identity, and
-  // (after a few beats) whether this strap broadcasts RR intervals.
-  async function probeStrap(server, device) {
-    var info = { name: device.name || null };
-    async function readString(svcName, chName) {
-      try {
-        var svc = await server.getPrimaryService(svcName);
-        var ch = await svc.getCharacteristic(chName);
-        var v = await ch.readValue();
-        return new TextDecoder().decode(v).replace(/\0+$/, '') || null;
-      } catch (e) { return null; }
-    }
-    try {
-      var bsvc = await server.getPrimaryService('battery_service');
-      var bch = await bsvc.getCharacteristic('battery_level');
-      info.battery = (await bch.readValue()).getUint8(0);
-    } catch (e) { info.battery = null; }
-    info.manufacturer = await readString('device_information', 'manufacturer_name_string');
-    info.model = await readString('device_information', 'model_number_string');
-    info.firmware = await readString('device_information', 'firmware_revision_string');
-    // Give the stream a moment so the RR flag has been observed (or not).
-    setTimeout(function () {
-      info.rrSupported = !!ble.rrSeen;
-      ble.info = info;
-      callApi('setStrapInfo', [info], function () { return { ok: true }; });
-      renderStrapSurfaces();
-    }, 5000);
-  }
-
-  // Reconnect to a previously granted strap without a chooser. Works when
-  // Chromium's persistent Web Bluetooth permissions are available and the
-  // strap is in range; quietly returns false otherwise.
-  async function tryKnownStrap() {
-    // Reconnect to the device already granted in this session: no scan.
-    if (ble.granted) {
-      try {
-        await subscribeStrap(ble.granted);
-        return true;
-      } catch (err) {
-        scheduleStrapReconnect();
-        return true; // owned by the retry loop; do not fall through to a scan
-      }
-    }
-    return false;
-  }
-
-  async function connectStrap(quiet) {
-    if (!bleSupported()) {
-      if (!quiet) {
-        ble.status = 'error';
-        ble.error = 'Bluetooth is not available in this build.';
-        renderHeartRate(state.heartRate);
-      }
+    if (ble.status !== 'connected') {
+      ble.bpm = null;
+      if (prevStatus !== ble.status) renderStrapSurfaces();
       return;
     }
-    if (ble.reconnectTimer) { clearTimeout(ble.reconnectTimer); ble.reconnectTimer = null; }
-    ble.reconnectTries = 0;
-    ble.status = 'scanning';
-    ble.quiet = !!quiet;
-    ble.error = null;
-    ble.scanStartedAt = Date.now();
-    var mySeq = ++ble.scanSeq;
-    // Watchdog: if Chromium never fires a chooser event (no BLE devices in
-    // sight at all), requestDevice() never settles and, without this, the
-    // 'scanning' state would block every future auto-connect attempt.
-    // The stale promise stays pending harmlessly; if it ever resolves with
-    // the strap, subscribeStrap() still runs and connects.
-    setTimeout(function () {
-      if (ble.scanSeq === mySeq && ble.status === 'scanning') {
-        ble.status = 'off';
+
+    // A new beat drives the workout engine and the in-place number update;
+    // a repeated timestamp (a status-only push) must not double-count.
+    if (isNum(live.bpm) && live.lastAt && live.lastAt !== prevAt) {
+      ble.lastAt = live.lastAt;
+      onStrapSample({ bpm: live.bpm, at: live.lastAt });
+    }
+    if (prevStatus !== 'connected') renderStrapSurfaces();
+  }
+
+  function startStrapWatch() {
+    if (window.whoop && typeof window.whoop.onStrap === 'function') {
+      window.whoop.onStrap(applyStrapLive);
+    }
+    // A stream that goes silent without a status change (asleep strap, helper
+    // wedged) should not leave a stale number on screen.
+    setInterval(function () {
+      if (ble.status !== 'connected') return;
+      if (ble.lastAt && Date.now() - ble.lastAt > 20000) {
+        ble.status = 'disconnected';
+        ble.bpm = null;
         renderStrapSurfaces();
       }
-    }, 35000);
-    renderStrapSurfaces();
-    try {
-      var device = await navigator.bluetooth.requestDevice({
-        filters: [{ services: ['heart_rate'] }],
-        optionalServices: ['battery_service', 'device_information'],
-      });
-      await subscribeStrap(device);
-    } catch (err) {
-      if (quiet) {
-        // Silent attempt: no error UI, but keep the reason for diagnostics.
-        ble.status = 'off';
-        ble.error = 'quiet: ' + ((err && err.name) || 'Error') + ' ' + ((err && err.message) || '').slice(0, 120);
-      } else {
-        ble.status = 'error';
-        ble.error = (err && err.name === 'NotFoundError')
-          ? 'No strap found. In the WHOOP app, open your device settings and turn on Broadcast Heart Rate, then try again.'
-          : 'Bluetooth connection failed: ' + ((err && err.message) || err);
-      }
-      ble.device = null;
-      if (!quiet) renderStrapSurfaces();
-      else if (state.activeView === 'overview') renderOverviewStrap();
-    }
-  }
-
-  // Called by the main process (with a synthetic user gesture) on launch,
-  // on wake, and every few minutes while auto-connect is enabled.
-  window.__strapState = function () {
-    return {
-      status: ble.status,
-      quiet: ble.quiet,
-      error: ble.error,
-      scanStartedAgoMs: ble.scanStartedAt ? Date.now() - ble.scanStartedAt : null,
-      lastBeatAgoMs: ble.lastAt ? Date.now() - ble.lastAt : null,
-      device: ble.device ? ble.device.name || true : null,
-      bpm: ble.bpm,
-    };
-  };
-
-  // Reconnect heartbeat, owned entirely by the renderer. It only ever calls
-  // gatt.connect() on a device the user already granted with a real click, so
-  // it never scans and never needs a synthetic user gesture — the two things
-  // that crashed Chromium's Bluetooth stack here.
-  function startStrapWatch() {
-    setInterval(function () {
-      if (ble.status === 'connected' || !ble.granted) return;
-      if (ble.reconnectTimer) return;
-      ble.reconnectTries = 0; // a steady 5s probe once backoff has run out
-      scheduleStrapReconnect();
-    }, 30000);
-    window.addEventListener('focus', function () {
-      if (ble.status !== 'connected' && ble.granted && !ble.reconnectTimer) {
-        ble.reconnectTries = 0;
-        scheduleStrapReconnect();
-      }
-    });
-  }
-
-  function disconnectStrap() {
-    ble.granted = null; // user asked to stop; no automatic reconnects
-    if (ble.reconnectTimer) { clearTimeout(ble.reconnectTimer); ble.reconnectTimer = null; }
-    try {
-      if (ble.device && ble.device.gatt && ble.device.gatt.connected) {
-        ble.device.gatt.disconnect();
-        return; // gattserverdisconnected fires and finishes the teardown
-      }
-    } catch (err) { /* fall through */ }
-    onStrapDisconnected();
+    }, 10000);
   }
 
   /* ---------------- live workout sessions ---------------- */
@@ -2200,6 +2006,10 @@
       recent: [], // last 40 s of beats, for the stop-peak
       hrrPending: null,
     };
+    // Main suppresses the resting-rate alert while a workout is running.
+    if (window.whoop && typeof window.whoop.setStrapWorkout === 'function') {
+      window.whoop.setStrapWorkout(true);
+    }
     renderHeartRate(state.heartRate);
   }
 
@@ -2208,6 +2018,9 @@
     if (!w || !w.active) return;
     w.active = false;
     w.endedAt = Date.now();
+    if (window.whoop && typeof window.whoop.setStrapWorkout === 'function') {
+      window.whoop.setStrapWorkout(false);
+    }
     // Peak near the stop: max over the last 40 s of effort.
     var stopPeak = w.recent.length
       ? Math.max.apply(null, w.recent.map(function (x) { return x[1]; }))
@@ -2434,13 +2247,11 @@
       : '';
 
     var strapOn = ble.status === 'connected';
+    // Status, not a control: the strap connects and reconnects by itself.
     var strapBtn =
-      '<button type="button" id="hr-strap-btn" class="hr-live-btn hr-strap-btn' +
-      (strapOn ? ' on' : '') + '" aria-pressed="' + strapOn + '"' +
-      (ble.status === 'scanning' ? ' disabled' : '') + '>' +
-      '<span class="hr-live-btn-dot" aria-hidden="true"></span>' +
-      (strapOn ? 'Strap live' : ble.status === 'scanning' ? 'Scanning&hellip;' : 'Connect strap') +
-      '</button>';
+      '<span class="strap-strip-state' + (strapOn ? ' on' : '') + '">' +
+      (strapOn ? 'Strap live' : escapeHTML(strapStatusText())) +
+      '</span>';
 
     var head =
       '<div class="card-head hr-head"><span class="micro-label">Heart Rate &mdash; today</span>' +
@@ -3264,17 +3075,6 @@
       if (banner) { banner.hidden = true; banner.innerHTML = ''; }
     });
 
-    /* overview strap strip */
-    var viewOverview = document.getElementById('view-overview');
-    if (viewOverview) {
-      viewOverview.addEventListener('click', function (e) {
-        var b = e.target.closest('#ov-strap-btn');
-        if (!b) return;
-        if (ble.status === 'connected') disconnectStrap();
-        else connectStrap(false);
-      });
-    }
-
     /* live heart-rate toggle */
     var viewHealth = document.getElementById('view-health');
     if (viewHealth) {
@@ -3282,11 +3082,6 @@
         if (e.target.closest('#wo-start-btn')) { startWorkout(); return; }
         if (e.target.closest('#wo-stop-btn')) { stopWorkout(); return; }
         if (e.target.closest('#hr-breathe-btn')) { openBreathing(); return; }
-        var strapBtnEl = e.target.closest('#hr-strap-btn');
-        if (strapBtnEl) {
-          if (ble.status === 'connected') disconnectStrap();
-          else connectStrap(false);
-        }
       });
     }
 
