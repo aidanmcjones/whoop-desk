@@ -29,21 +29,18 @@ function windowSize() {
 
 app.setName('Whoop+');
 
-// Web Bluetooth on macOS 26 crashed Electron 33's browser process
-// (EXC_BREAKPOINT in a V8 CHECK) in four separate configurations: with the
-// permissions-backend flag on, on a second requestDevice() scan after a
-// disconnect, and from a bare harness that retained the device. Electron 44
-// survives the same sequence. Two rules hold regardless:
-//   1. Only ever scan from a real user gesture, once per session.
-//   2. Reconnect by calling gatt.connect() on the already-granted device.
-// The renderer enforces both; nudges below may only reconnect, never scan.
+// Do NOT reintroduce Web Bluetooth here. Chromium will not start a scan
+// without a real user gesture, so it can never connect to the strap on its
+// own — that limitation is the only reason this app ever had a "Connect
+// strap" button. Driving it from a synthetic gesture instead crashed the
+// browser process (EXC_BREAKPOINT in a V8 CHECK) every time.
 //
-// NOTE: do NOT enable Chromium's WebBluetoothNewPermissionsBackend here.
-// On Electron 33 / macOS 26 it crashes the browser process (EXC_BREAKPOINT
-// in the Bluetooth chooser path) the moment a Web Bluetooth scan starts —
-// reproduced deterministically via the auto-connect nudge. Auto-connect
-// works without it: the renderer's quiet requestDevice() scan is resolved
-// below by device name, no chooser UI and no persisted grants needed.
+// The strap now runs through native/hr-bridge.swift, which uses CoreBluetooth
+// directly (see src/strap-bridge.js). The key fact that makes it automatic: a
+// strap already paired to this Mac is connected at the system level, and a
+// connected peripheral stops advertising — so scanning never finds it, no
+// matter how long you scan. retrieveConnectedPeripherals() returns it
+// immediately, and attaching needs no scan, no chooser and no gesture.
 
 // The packaged Whoop+.app and a dev `electron .` checkout both default to
 // the same userData dir ("Whoop+"), since userData is keyed off app name.
@@ -190,36 +187,6 @@ if (!gotLock) {
     }
   }
 
-  // Electron 44 gates Web Bluetooth behind session permission handlers. With
-  // the defaults, requestDevice() rejects with NotFoundError in ~150ms and
-  // select-bluetooth-device never fires (verified: availability true, zero
-  // chooser events). Whoop+ is a single-purpose local app whose only device
-  // need is the user's own heart-rate strap, so allow exactly that.
-  function allowStrapBluetooth() {
-    const { session } = require('electron');
-    const ses = session.defaultSession;
-    try {
-      ses.setPermissionCheckHandler((wc, permission) => {
-        if (permission === 'bluetooth') return true;
-        return permission === 'notifications' || permission === 'media' ? true : false;
-      });
-    } catch (err) {
-      console.error('setPermissionCheckHandler failed:', err);
-    }
-    try {
-      ses.setPermissionRequestHandler((wc, permission, callback) => {
-        callback(permission === 'bluetooth' || permission === 'notifications');
-      });
-    } catch (err) {
-      console.error('setPermissionRequestHandler failed:', err);
-    }
-    try {
-      ses.setDevicePermissionHandler((details) => details.deviceType === 'bluetooth');
-    } catch (err) {
-      console.error('setDevicePermissionHandler failed:', err);
-    }
-  }
-
   function createWindow() {
     const size = windowSize();
     mainWindow = new BrowserWindow({
@@ -244,36 +211,6 @@ if (!gotLock) {
 
     mainWindow.on('closed', () => {
       mainWindow = null;
-    });
-
-    // Web Bluetooth: Chromium fires this repeatedly as devices appear during
-    // a renderer requestDevice() scan, handing over a fresh callback each
-    // time. Rules learned the hard way (browser-process CHECK crashes):
-    // never invoke a callback synchronously inside the event, never invoke
-    // a stale callback after a newer event has fired, and never invoke one
-    // twice. Each event gets a token; only the newest token's callback may
-    // ever run, always deferred, always once.
-    let bleChooserSeq = 0;
-    let bleCancelTimer = null;
-    mainWindow.webContents.on('select-bluetooth-device', (event, devices, callback) => {
-      event.preventDefault();
-      const token = ++bleChooserSeq;
-      const fireOnce = (deviceId) => {
-        if (token !== bleChooserSeq) return; // a newer event owns the chooser
-        bleChooserSeq++; // consume: no later timer/path may fire again
-        if (bleCancelTimer) { clearTimeout(bleCancelTimer); bleCancelTimer = null; }
-        try { callback(deviceId); } catch (err) { /* chooser already gone */ }
-      };
-      const strap = devices.find((d) => /whoop/i.test(d.deviceName || ''));
-      if (strap) {
-        setTimeout(() => fireOnce(strap.deviceId), 0);
-        return;
-      }
-      if (bleCancelTimer) clearTimeout(bleCancelTimer);
-      bleCancelTimer = setTimeout(() => {
-        bleCancelTimer = null;
-        fireOnce('');
-      }, 25000);
     });
 
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
@@ -434,7 +371,7 @@ if (!gotLock) {
   }
 
   // -----------------------------------------------------------------------
-  // Strap beat stream (renderer pushes each measured Bluetooth reading)
+  // Strap beat stream (fed by the native bridge below)
   // -----------------------------------------------------------------------
   const strapState = {
     beats: [], // [msEpoch, bpm], rolling 4 minutes
@@ -470,13 +407,17 @@ if (!gotLock) {
     }
   }
 
-  ipcMain.on('whoop:strapBeat', (event, payload) => {
-    const bpm = payload && Number(payload.bpm);
+  // The renderer's live-workout panel owns this flag; it only suppresses the
+  // resting-rate alert while a workout is running.
+  ipcMain.on('whoop:strapWorkout', (event, active) => {
+    strapState.inWorkout = !!active;
+  });
+
+  function recordBeat(bpm, at) {
     if (!Number.isFinite(bpm) || bpm < 25 || bpm > 240) return;
-    const now = Date.now();
+    const now = Number.isFinite(at) ? at : Date.now();
     strapState.lastBeatAt = now;
     strapState.lastBpm = Math.round(bpm);
-    strapState.inWorkout = !!(payload && payload.inWorkout);
     strapState.beats.push([now, bpm]);
     const cutoff = now - 4 * 60000;
     while (strapState.beats.length && strapState.beats[0][0] < cutoff) strapState.beats.shift();
@@ -490,18 +431,163 @@ if (!gotLock) {
     strapState.reverting = setTimeout(applyTrayTitle, 16000);
 
     maybeRestingAlert();
-  });
+  }
 
   // -----------------------------------------------------------------------
-  // Auto-connect: nudge the renderer to try a silent strap connection. The
-  // executeJavaScript userGesture flag satisfies Chromium's activation
-  // requirement, and the main-process chooser auto-picks the WHOOP by name.
+  // Native strap bridge
+  //
+  // native/hr-bridge.swift talks to CoreBluetooth directly. That is what
+  // makes connecting automatic: a strap already paired to this Mac is
+  // connected at the system level and therefore stops advertising, so no
+  // amount of scanning finds it — but retrieveConnectedPeripherals() does,
+  // and attaching to it needs no scan, no chooser and no user gesture.
+  // Chromium's Web Bluetooth could never do this: it requires a real click
+  // before it will even look.
+  //
+  // Running in the main process also means beats are recorded whenever the
+  // app is running, with no window open.
   // -----------------------------------------------------------------------
-  // Nothing here drives Web Bluetooth. Every crash we reproduced went through
-  // executeJavaScript with a synthetic user gesture driving requestDevice;
-  // the only configurations that ever worked were a real click. So the
-  // renderer owns the whole Bluetooth lifecycle: one scan from a real click,
-  // then scan-free gatt.connect() retries on its own timer.
+  const strapLive = {
+    status: 'starting',
+    bpm: null,
+    lastAt: 0,
+    rr: [], // recent RR intervals in seconds, for HRV
+    rmssd: null,
+    info: null,
+    battery: null,
+    deviceId: null,
+    deviceName: null,
+  };
+  let strapBridge = null;
+  let strapPending = []; // samples awaiting a batched store write
+  let strapFlushTimer = null;
+
+  function pushStrap() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('whoop:strap', {
+        status: strapLive.status,
+        bpm: strapLive.bpm,
+        lastAt: strapLive.lastAt,
+        rmssd: strapLive.rmssd,
+        battery: strapLive.battery,
+        info: strapLive.info,
+        deviceName: strapLive.deviceName,
+      });
+    }
+  }
+
+  // Writing every beat would mean a disk write per second; batch instead.
+  async function flushStrapSamples() {
+    if (!hrStore || !strapPending.length) return;
+    const batch = strapPending;
+    strapPending = [];
+    try {
+      await hrStore.recordMeasuredBatch(batch);
+    } catch (err) {
+      console.error('Strap sample write failed:', err);
+    }
+  }
+
+  function rmssdOf(intervals) {
+    if (!Array.isArray(intervals) || intervals.length < 3) return null;
+    let sum = 0;
+    let n = 0;
+    for (let i = 1; i < intervals.length; i += 1) {
+      const diff = (intervals[i] - intervals[i - 1]) * 1000;
+      sum += diff * diff;
+      n += 1;
+    }
+    if (!n) return null;
+    return Math.round(Math.sqrt(sum / n));
+  }
+
+  function handleStrapEvent(event) {
+    switch (event.t) {
+      case 'state': {
+        strapLive.status = event.v;
+        if (event.v !== 'connected') {
+          strapLive.bpm = null;
+          strapLive.rr = [];
+          strapLive.rmssd = null;
+        }
+        pushStrap();
+        applyTrayTitle();
+        break;
+      }
+      case 'device': {
+        strapLive.deviceId = event.id || null;
+        strapLive.deviceName = event.name || null;
+        break;
+      }
+      case 'hr': {
+        const bpm = Number(event.bpm);
+        if (!Number.isFinite(bpm)) break;
+        const at = Number.isFinite(event.at) ? event.at : Date.now();
+        strapLive.status = 'connected';
+        strapLive.bpm = Math.round(bpm);
+        strapLive.lastAt = at;
+        if (Array.isArray(event.rr) && event.rr.length) {
+          strapLive.rr.push(...event.rr);
+          if (strapLive.rr.length > 150) strapLive.rr = strapLive.rr.slice(-150);
+          strapLive.rmssd = rmssdOf(strapLive.rr);
+        }
+        recordBeat(bpm, at);
+        strapPending.push({ t: new Date(at).toISOString(), bpm: Math.round(bpm) });
+        pushStrap();
+        break;
+      }
+      case 'battery': {
+        const pct = Number(event.pct);
+        if (Number.isFinite(pct)) {
+          strapLive.battery = pct;
+          strapLive.info = { ...(strapLive.info || {}), battery: pct };
+          saveStrapInfo();
+          pushStrap();
+        }
+        break;
+      }
+      case 'info': {
+        const patch = {};
+        if (event.fw) patch.firmware = String(event.fw).replace(/\0/g, '');
+        if (event.model) patch.model = String(event.model).replace(/\0/g, '');
+        if (Object.keys(patch).length) {
+          strapLive.info = { ...(strapLive.info || {}), ...patch };
+          saveStrapInfo();
+          pushStrap();
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  function saveStrapInfo() {
+    if (!hrStore) return;
+    const info = {
+      ...(strapLive.info || {}),
+      name: strapLive.deviceName || undefined,
+      deviceId: strapLive.deviceId || undefined,
+      rrSupported: strapLive.rmssd != null || undefined,
+      seenAt: new Date().toISOString(),
+    };
+    hrStore.setStrapInfo(info).catch((err) => console.error('setStrapInfo failed:', err));
+  }
+
+  function startStrapBridge() {
+    const { createStrapBridge } = require('./src/strap-bridge.js');
+    const stored = hrStore && hrStore.getStrapInfo ? hrStore.getStrapInfo() : null;
+    const preferredId = stored && stored.deviceId ? stored.deviceId : null;
+    strapBridge = createStrapBridge({ onEvent: handleStrapEvent, preferredId });
+    if (!strapBridge.available) {
+      strapLive.status = 'unavailable';
+      pushStrap();
+      return;
+    }
+    strapFlushTimer = setInterval(() => {
+      flushStrapSamples().catch((err) => console.error('Strap flush failed:', err));
+    }, 15000);
+  }
 
   // Heart-rate sampling. WHOOP publishes no HR time series, so the series is
   // reconstructed from the in-progress cycle's cumulative kilojoules (see
@@ -1049,17 +1135,25 @@ if (!gotLock) {
     }
 
     setDockIcon();
-    allowStrapBluetooth();
     applyLoginItemSettings();
     createWindow();
     createTray();
     startAutoRefreshTimer();
     startHrTimer();
+    startStrapBridge();
     scheduleMorningNotification();
 
     powerMonitor.on('resume', () => {
       doRefresh().catch((err) => console.error('Refresh on resume failed:', err));
       sampleHeartRate().catch((err) => console.error('HR sample on resume failed:', err));
+    });
+
+    // Flush buffered beats and shut the helper down cleanly, so the last
+    // minute of samples is not lost on quit.
+    app.on('before-quit', () => {
+      if (strapFlushTimer) clearInterval(strapFlushTimer);
+      flushStrapSamples().catch(() => {});
+      if (strapBridge) strapBridge.stop();
     });
 
     app.on('activate', () => {

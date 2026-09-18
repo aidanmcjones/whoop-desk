@@ -7,3 +7,5 @@ reference/
 vendor/whoop-mcp/node_modules/
 dist-app/
 assets/icon.iconset/
+native/bin/
+dist/

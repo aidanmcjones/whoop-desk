@@ -7,7 +7,9 @@
   "scripts": {
     "start": "electron .",
     "smoke": "electron . --smoke",
-    "ipc-check": "electron . --ipc-check"
+    "ipc-check": "electron . --ipc-check",
+    "build:native": "swiftc -O -o native/bin/hr-bridge native/hr-bridge.swift",
+    "build:app": "npm run build:native && npx @electron/packager . 'Whoop+' --platform=darwin --arch=arm64 --out=dist --overwrite --no-asar --extend-info=assets/extend-info.plist --extra-resource=native/bin/hr-bridge"
   },
   "devDependencies": {
     "@electron/packager": "^20.3.0",
