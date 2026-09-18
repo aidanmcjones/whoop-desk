@@ -29,6 +29,15 @@ function windowSize() {
 
 app.setName('Whoop+');
 
+// Web Bluetooth on macOS 26 crashed Electron 33's browser process
+// (EXC_BREAKPOINT in a V8 CHECK) in four separate configurations: with the
+// permissions-backend flag on, on a second requestDevice() scan after a
+// disconnect, and from a bare harness that retained the device. Electron 44
+// survives the same sequence. Two rules hold regardless:
+//   1. Only ever scan from a real user gesture, once per session.
+//   2. Reconnect by calling gatt.connect() on the already-granted device.
+// The renderer enforces both; nudges below may only reconnect, never scan.
+//
 // NOTE: do NOT enable Chromium's WebBluetoothNewPermissionsBackend here.
 // On Electron 33 / macOS 26 it crashes the browser process (EXC_BREAKPOINT
 // in the Bluetooth chooser path) the moment a Web Bluetooth scan starts —
@@ -181,6 +190,36 @@ if (!gotLock) {
     }
   }
 
+  // Electron 44 gates Web Bluetooth behind session permission handlers. With
+  // the defaults, requestDevice() rejects with NotFoundError in ~150ms and
+  // select-bluetooth-device never fires (verified: availability true, zero
+  // chooser events). Whoop+ is a single-purpose local app whose only device
+  // need is the user's own heart-rate strap, so allow exactly that.
+  function allowStrapBluetooth() {
+    const { session } = require('electron');
+    const ses = session.defaultSession;
+    try {
+      ses.setPermissionCheckHandler((wc, permission) => {
+        if (permission === 'bluetooth') return true;
+        return permission === 'notifications' || permission === 'media' ? true : false;
+      });
+    } catch (err) {
+      console.error('setPermissionCheckHandler failed:', err);
+    }
+    try {
+      ses.setPermissionRequestHandler((wc, permission, callback) => {
+        callback(permission === 'bluetooth' || permission === 'notifications');
+      });
+    } catch (err) {
+      console.error('setPermissionRequestHandler failed:', err);
+    }
+    try {
+      ses.setDevicePermissionHandler((details) => details.deviceType === 'bluetooth');
+    } catch (err) {
+      console.error('setDevicePermissionHandler failed:', err);
+    }
+  }
+
   function createWindow() {
     const size = windowSize();
     mainWindow = new BrowserWindow({
@@ -206,10 +245,6 @@ if (!gotLock) {
     mainWindow.on('closed', () => {
       mainWindow = null;
     });
-
-    // Coming back to the app is the natural "am I in range now?" moment.
-    mainWindow.on('focus', () => nudgeStrapConnect());
-    mainWindow.on('show', () => nudgeStrapConnect());
 
     // Web Bluetooth: Chromium fires this repeatedly as devices appear during
     // a renderer requestDevice() scan, handing over a fresh callback each
@@ -462,27 +497,11 @@ if (!gotLock) {
   // executeJavaScript userGesture flag satisfies Chromium's activation
   // requirement, and the main-process chooser auto-picks the WHOOP by name.
   // -----------------------------------------------------------------------
-  // 1 minute: a scan itself lasts up to 25s and costs nothing while idle, so
-  // this bounds "walked back into range -> streaming" at roughly a minute.
-  const STRAP_RETRY_MINS = 1;
-  let strapRetryTimer = null;
-  let lastStrapNudgeAt = 0;
-
-  function nudgeStrapConnect() {
-    if (!settings.autoConnectStrap) return;
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (strapState.lastBeatAt && Date.now() - strapState.lastBeatAt < 20000) return; // already streaming
-    if (Date.now() - lastStrapNudgeAt < 15000) return; // focus/show/timer overlap
-    lastStrapNudgeAt = Date.now();
-    mainWindow.webContents
-      .executeJavaScript('window.__tryStrapConnect && window.__tryStrapConnect(true)', true)
-      .catch(() => {});
-  }
-
-  function startStrapRetryTimer() {
-    if (strapRetryTimer) clearInterval(strapRetryTimer);
-    strapRetryTimer = setInterval(nudgeStrapConnect, STRAP_RETRY_MINS * 60000);
-  }
+  // Nothing here drives Web Bluetooth. Every crash we reproduced went through
+  // executeJavaScript with a synthetic user gesture driving requestDevice;
+  // the only configurations that ever worked were a real click. So the
+  // renderer owns the whole Bluetooth lifecycle: one scan from a real click,
+  // then scan-free gatt.connect() retries on its own timer.
 
   // Heart-rate sampling. WHOOP publishes no HR time series, so the series is
   // reconstructed from the in-progress cycle's cumulative kilojoules (see
@@ -1030,19 +1049,17 @@ if (!gotLock) {
     }
 
     setDockIcon();
+    allowStrapBluetooth();
     applyLoginItemSettings();
     createWindow();
     createTray();
     startAutoRefreshTimer();
     startHrTimer();
-    startStrapRetryTimer();
-    setTimeout(nudgeStrapConnect, 8000); // first silent attempt after the UI settles
     scheduleMorningNotification();
 
     powerMonitor.on('resume', () => {
       doRefresh().catch((err) => console.error('Refresh on resume failed:', err));
       sampleHeartRate().catch((err) => console.error('HR sample on resume failed:', err));
-      setTimeout(nudgeStrapConnect, 5000);
     });
 
     app.on('activate', () => {
