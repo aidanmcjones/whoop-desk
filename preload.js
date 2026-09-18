@@ -7,7 +7,6 @@ contextBridge.exposeInMainWorld('whoop', {
   getHistory: (opts) => ipcRenderer.invoke('whoop:getHistory', opts),
   getBackfillStatus: () => ipcRenderer.invoke('whoop:getBackfillStatus'),
   getHeartRate: () => ipcRenderer.invoke('whoop:getHeartRate'),
-  setLiveHr: (payload) => ipcRenderer.invoke('whoop:setLiveHr', payload),
   recordStrapSamples: (batch) => ipcRenderer.invoke('whoop:recordStrapSamples', batch),
   addStrapSession: (session) => ipcRenderer.invoke('whoop:addStrapSession', session),
   setStrapInfo: (info) => ipcRenderer.invoke('whoop:setStrapInfo', info),

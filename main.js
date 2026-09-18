@@ -207,6 +207,10 @@ if (!gotLock) {
       mainWindow = null;
     });
 
+    // Coming back to the app is the natural "am I in range now?" moment.
+    mainWindow.on('focus', () => nudgeStrapConnect());
+    mainWindow.on('show', () => nudgeStrapConnect());
+
     // Web Bluetooth: Chromium fires this repeatedly as devices appear during
     // a renderer requestDevice() scan, handing over a fresh callback each
     // time. Rules learned the hard way (browser-process CHECK crashes):
@@ -458,13 +462,18 @@ if (!gotLock) {
   // executeJavaScript userGesture flag satisfies Chromium's activation
   // requirement, and the main-process chooser auto-picks the WHOOP by name.
   // -----------------------------------------------------------------------
-  const STRAP_RETRY_MINS = 3;
+  // 1 minute: a scan itself lasts up to 25s and costs nothing while idle, so
+  // this bounds "walked back into range -> streaming" at roughly a minute.
+  const STRAP_RETRY_MINS = 1;
   let strapRetryTimer = null;
+  let lastStrapNudgeAt = 0;
 
   function nudgeStrapConnect() {
     if (!settings.autoConnectStrap) return;
     if (!mainWindow || mainWindow.isDestroyed()) return;
     if (strapState.lastBeatAt && Date.now() - strapState.lastBeatAt < 20000) return; // already streaming
+    if (Date.now() - lastStrapNudgeAt < 15000) return; // focus/show/timer overlap
+    lastStrapNudgeAt = Date.now();
     mainWindow.webContents
       .executeJavaScript('window.__tryStrapConnect && window.__tryStrapConnect(true)', true)
       .catch(() => {});
@@ -486,53 +495,6 @@ if (!gotLock) {
   // the store, so a fast poll adds no false points.
   const HR_SAMPLE_SECONDS = 30;
 
-  // Live mode: the user holds the button on and Whoop+ polls as fast as is
-  // responsible. The published ceiling is 100 requests/minute and 10,000/day,
-  // so 2 seconds costs 30/minute — under a third of the per-minute budget.
-  // It is capped in time rather than left running: 20 minutes of live mode is
-  // 600 calls, and the baseline timer is suspended meanwhile so the two never
-  // stack. Note this lowers LATENCY, not resolution: WHOOP still publishes in
-  // batches, so live mode means a new batch shows up within ~2s of landing.
-  const HR_LIVE_SECONDS = 2;
-  const HR_LIVE_MAX_MINUTES = 20;
-  let hrLiveTimer = null;
-  let hrLiveUntil = 0;
-
-  function hrLiveActive() {
-    return !!hrLiveTimer && Date.now() < hrLiveUntil;
-  }
-
-  function stopHrLive() {
-    if (hrLiveTimer) clearInterval(hrLiveTimer);
-    hrLiveTimer = null;
-    hrLiveUntil = 0;
-    startHrTimer();
-    pushHeartRate();
-  }
-
-  function startHrLive() {
-    if (hrTimer) clearInterval(hrTimer);
-    hrTimer = null;
-    if (hrLiveTimer) clearInterval(hrLiveTimer);
-    hrLiveUntil = Date.now() + HR_LIVE_MAX_MINUTES * 60000;
-    hrLiveTimer = setInterval(() => {
-      if (Date.now() >= hrLiveUntil) {
-        stopHrLive();
-        return;
-      }
-      sampleHeartRate().catch((err) => console.error('HR live sample failed:', err));
-    }, HR_LIVE_SECONDS * 1000);
-    sampleHeartRate().catch((err) => console.error('HR live sample failed:', err));
-  }
-
-  async function pushHeartRate() {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    try {
-      mainWindow.webContents.send('whoop:heartRate', await buildHrPayload());
-    } catch (err) {
-      console.error('Heart-rate push failed:', err);
-    }
-  }
 
   // Refit the personal energy -> bpm model occasionally; history barely
   // moves within a session, so hourly is ample.
@@ -584,9 +546,7 @@ if (!gotLock) {
           maxHr: cycle.maxHr,
         },
       });
-      // While live, push every poll so the card's clock and countdown stay
-      // honest even when WHOOP returned no new data.
-      if ((result.added || hrLiveActive()) && mainWindow && !mainWindow.isDestroyed()) {
+      if (result.added && mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('whoop:heartRate', await buildHrPayload());
       }
     } catch (err) {
@@ -611,13 +571,9 @@ if (!gotLock) {
     const cycles = data.cycles || [];
     const workouts = data.workouts || [];
     const cycle = cycles.length ? cycles[0] : null;
-    const live = hrLiveActive();
     return {
       ...hrStore.getSeries({ cycle, workouts }),
-      sampleEverySeconds: live ? HR_LIVE_SECONDS : HR_SAMPLE_SECONDS,
-      live,
-      liveSecondsLeft: live ? Math.max(0, Math.round((hrLiveUntil - Date.now()) / 1000)) : 0,
-      liveMaxMinutes: HR_LIVE_MAX_MINUTES,
+      sampleEverySeconds: HR_SAMPLE_SECONDS,
     };
   }
 
@@ -901,16 +857,6 @@ if (!gotLock) {
     try {
       if (!hrStore) return { error: 'Heart-rate monitor not initialized yet' };
       return await hrStore.recordMeasuredBatch(Array.isArray(batch) ? batch : []);
-    } catch (err) {
-      return { error: String(err) };
-    }
-  });
-
-  ipcMain.handle('whoop:setLiveHr', async (event, { on } = {}) => {
-    try {
-      if (on) startHrLive();
-      else stopHrLive();
-      return await buildHrPayload();
     } catch (err) {
       return { error: String(err) };
     }

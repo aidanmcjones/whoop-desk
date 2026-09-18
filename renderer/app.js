@@ -886,20 +886,11 @@
       latestBpm: null, latestAt: null, rangeBpm: null,
       sampleCount: 0, lastSampleAt: null, warmingUp: true,
       sampleEverySeconds: 30, model: null,
-      live: false, liveSecondsLeft: 0, liveMaxMinutes: 20,
     };
   }
 
   function mockAddStrapSession() { return { added: true }; }
   function mockSetStrapInfo() { return { ok: true }; }
-
-  function mockSetLiveHr(payload) {
-    var base = mockGetHeartRate();
-    base.live = !!(payload && payload.on);
-    base.sampleEverySeconds = base.live ? 2 : 30;
-    base.liveSecondsLeft = base.live ? 20 * 60 : 0;
-    return base;
-  }
 
   function mockCoachStatus() {
     return (state.data && state.data.coachStatus) || { available: false, source: null };
@@ -1858,6 +1849,8 @@
     device: null,
     error: null,
     quiet: false,   // silent auto-connect attempt: no error surfacing
+    scanStartedAt: 0,
+    scanSeq: 0,
     rrBuf: [],      // last ~150 RR intervals (ms) for live RMSSD
     rrSeen: false,
     rmssd: null,
@@ -2079,6 +2072,19 @@
     ble.status = 'scanning';
     ble.quiet = !!quiet;
     ble.error = null;
+    ble.scanStartedAt = Date.now();
+    var mySeq = ++ble.scanSeq;
+    // Watchdog: if Chromium never fires a chooser event (no BLE devices in
+    // sight at all), requestDevice() never settles and, without this, the
+    // 'scanning' state would block every future auto-connect attempt.
+    // The stale promise stays pending harmlessly; if it ever resolves with
+    // the strap, subscribeStrap() still runs and connects.
+    setTimeout(function () {
+      if (ble.scanSeq === mySeq && ble.status === 'scanning') {
+        ble.status = 'off';
+        renderStrapSurfaces();
+      }
+    }, 35000);
     renderStrapSurfaces();
     try {
       var device = await navigator.bluetooth.requestDevice({
@@ -2106,7 +2112,8 @@
   // Called by the main process (with a synthetic user gesture) on launch,
   // on wake, and every few minutes while auto-connect is enabled.
   window.__tryStrapConnect = async function (quiet) {
-    if (ble.status === 'connected' || ble.status === 'scanning') return;
+    if (ble.status === 'connected') return;
+    if (ble.status === 'scanning' && Date.now() - ble.scanStartedAt < 40000) return;
     if (await tryKnownStrap()) return;
     await connectStrap(quiet !== false);
   };
@@ -2370,7 +2377,6 @@
           : '')
       : '';
 
-    var live = !!hr.live;
     var strapOn = ble.status === 'connected';
     var strapBtn =
       '<button type="button" id="hr-strap-btn" class="hr-live-btn hr-strap-btn' +
@@ -2379,14 +2385,6 @@
       '<span class="hr-live-btn-dot" aria-hidden="true"></span>' +
       (strapOn ? 'Strap live' : ble.status === 'scanning' ? 'Scanning&hellip;' : 'Connect strap') +
       '</button>';
-    var liveBtn =
-      '<button type="button" id="hr-live-btn" class="hr-live-btn' + (live ? ' on' : '') +
-      '" aria-pressed="' + live + '">' +
-      '<span class="hr-live-btn-dot" aria-hidden="true"></span>' +
-      (live
-        ? 'Live &middot; ' + fmtInt(Math.ceil((hr.liveSecondsLeft || 0) / 60)) + 'm left'
-        : 'Check heart rate') +
-      '</button>';
 
     var head =
       '<div class="card-head hr-head"><span class="micro-label">Heart Rate &mdash; today</span>' +
@@ -2394,7 +2392,6 @@
       (noteHTML ? '<span class="card-head-note">' + noteHTML + '</span>' : '') +
       '<button type="button" id="hr-breathe-btn" class="hr-live-btn">Breathe</button>' +
       strapBtn +
-      liveBtn +
       '</span></div>';
 
     var strapFresh = strapOn && isNum(ble.bpm) && (Date.now() - ble.lastAt) < 15000;
@@ -2440,7 +2437,7 @@
       '<span class="unit">bpm</span></span>' +
       '<span class="hr-live-meta">' +
       (isNum(latest)
-        ? 'est. &middot; ' + zone.label + ' &middot; ' + hrClock(hr.latestAt, live)
+        ? 'est. &middot; ' + zone.label + ' &middot; ' + hrClock(hr.latestAt)
         : 'waiting for the first reading') +
       '</span>' +
       '</div>' +
@@ -2532,13 +2529,6 @@
         '</div>'
       : '';
 
-    var liveNote = live
-      ? '<p class="hr-foot">Live: polling every ' + fmtInt(hr.sampleEverySeconds) +
-        's, stopping automatically after ' + fmtInt(hr.liveMaxMinutes) +
-        ' minutes. WHOOP still publishes in batches, so this shortens the delay ' +
-        'before a new batch appears rather than adding detail between batches.</p>'
-      : '';
-
     var foot = (pts.length >= 2 && hr.model)
       ? '<p class="hr-foot">Line is estimated from energy burn, fitted to ' + fmtInt(hr.model.n) +
         ' of your own sessions (R&sup2; ' + fmt(hr.model.r2, 2) + ', typical error &plusmn;' +
@@ -2565,7 +2555,7 @@
       bleNote = '<p class="hr-foot">Scanning for your strap&hellip; make sure Broadcast Heart Rate is on in the WHOOP app (Device Settings). The scan gives up after 25 seconds.</p>';
     }
 
-    el.innerHTML = head + bleNote + readout + workoutBlockHTML() + body + acts + strapInfoLine + liveNote + foot;
+    el.innerHTML = head + bleNote + readout + workoutBlockHTML() + body + acts + strapInfoLine + foot;
     fillCharts(el);
   }
 
@@ -3054,11 +3044,6 @@
 
   async function setActiveView(view) {
     if (!view) return;
-    // Live polling is only meaningful while the card is on screen.
-    if (state.activeView === 'health' && view !== 'health' &&
-        state.heartRate && state.heartRate.live) {
-      callApi('setLiveHr', [{ on: false }], mockSetLiveHr);
-    }
     state.activeView = view;
     document.querySelectorAll('.view').forEach(function (v) {
       v.hidden = v.id !== 'view-' + view;
@@ -3245,18 +3230,6 @@
         if (strapBtnEl) {
           if (ble.status === 'connected') disconnectStrap();
           else connectStrap(false);
-          return;
-        }
-        var btn = e.target.closest('#hr-live-btn');
-        if (!btn) return;
-        var turningOn = !btn.classList.contains('on');
-        btn.disabled = true;
-        var res = await callApi('setLiveHr', [{ on: turningOn }], mockSetLiveHr);
-        if (res && !res.error) {
-          state.heartRate = res;
-          renderHeartRate(res);
-        } else {
-          btn.disabled = false;
         }
       });
     }
