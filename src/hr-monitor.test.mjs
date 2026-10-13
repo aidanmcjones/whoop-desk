@@ -152,10 +152,18 @@ test('buildSeries warms up with one reading and filters to the local day', () =>
 
 test('store discards unchanged reads, keeps energy, and persists the model', async () => {
   const dir = path.join(os.tmpdir(), `whoop-hr-test-${process.pid}-${Date.now()}`);
+  // The store prunes anything older than RETENTION_DAYS, so this test needs a
+  // cycle in the recent past rather than the fixed fixture date. Start of the
+  // UTC day containing (now - 3h) keeps every sample in the past and on one day.
+  const dayStart = new Date(Date.now() - 3 * 3600000);
+  dayStart.setUTCHours(0, 0, 0, 0);
+  const recentStart = dayStart.toISOString();
+  const recentDate = recentStart.slice(0, 10);
+  const mins = (n) => new Date(dayStart.getTime() + n * 60000).toISOString();
   try {
     const store = await initHrMonitor({ dataDir: dir });
     store.setModel(MODEL);
-    const cycle = { id: 7, start: CYCLE_START, kilojoules: 40, avgHr: 60, maxHr: 120 };
+    const cycle = { id: 7, start: recentStart, kilojoules: 40, avgHr: 60, maxHr: 120 };
 
     assert.equal((await store.record({ cycle, at: mins(10) })).added, true);
     // WHOOP batches updates, so most polls repeat the same energy figure.
@@ -163,7 +171,7 @@ test('store discards unchanged reads, keeps energy, and persists the model', asy
     assert.equal((await store.record({ cycle, at: mins(11) })).added, false);
     assert.equal((await store.record({ cycle: { ...cycle, kilojoules: 80 }, at: mins(20) })).added, true);
 
-    const series = store.getSeries({ cycle: { avgHr: 70, maxHr: 120 }, date: '2026-09-15', timeZone: 'UTC' });
+    const series = store.getSeries({ cycle: { avgHr: 70, maxHr: 120 }, date: recentDate, timeZone: 'UTC' });
     assert.equal(series.latestBpm, 67);
 
     const reloaded = await initHrMonitor({ dataDir: dir });

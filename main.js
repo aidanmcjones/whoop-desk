@@ -213,6 +213,10 @@ if (!gotLock) {
       mainWindow = null;
     });
 
+    // Opening or returning to the window should never show old numbers.
+    mainWindow.on('focus', refreshIfStale);
+    mainWindow.on('show', refreshIfStale);
+
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
 
     if (isSmoke) {
@@ -347,9 +351,17 @@ if (!gotLock) {
   // funnel through here; serialized so overlapping refreshes collapse into
   // one in-flight call).
   // -----------------------------------------------------------------------
+  // Backstop for anything below that could still hang (requests have their
+  // own 20s timeouts): a stuck sync must never block the ones after it.
+  const REFRESH_WATCHDOG_MS = 3 * 60000;
+
   async function doRefresh() {
     if (refreshInFlight) return refreshInFlight;
-    refreshInFlight = (async () => {
+    let watchdog = null;
+    const timedOut = new Promise((_, reject) => {
+      watchdog = setTimeout(() => reject(new Error('refresh timed out')), REFRESH_WATCHDOG_MS);
+    });
+    const work = (async () => {
       try {
         const client = await loadWhoopClient();
         const history = await loadHistory();
@@ -364,9 +376,13 @@ if (!gotLock) {
         await checkAnomalyAndNotify();
         return dashboard;
       } finally {
-        refreshInFlight = null;
+        clearTimeout(watchdog);
       }
     })();
+    refreshInFlight = Promise.race([work, timedOut]).finally(() => {
+      clearTimeout(watchdog);
+      refreshInFlight = null;
+    });
     return refreshInFlight;
   }
 
@@ -682,12 +698,74 @@ if (!gotLock) {
     };
   }
 
+  // Auto-sync. Analytics are recomputed from the synced store every time a
+  // view renders, so keeping the store fresh is all "auto-update" needs. The
+  // schedule is self-adjusting rather than a fixed interval:
+  //   - normally every settings.autoRefreshMins (10);
+  //   - every 3 min while today's recovery is not scored yet, so the morning
+  //     numbers appear soon after WHOOP finishes processing the night;
+  //   - after a failure, retry on a 20s -> 5 min backoff instead of waiting a
+  //     full interval (the resume-from-sleep sync usually fires before Wi-Fi
+  //     is back, which used to leave the morning stale for 10 minutes);
+  //   - on window focus/show, wake and unlock, whenever the last good sync is
+  //     more than 2 min old, so opening the app never shows old numbers.
+  const PENDING_REFRESH_MINS = 3;
+  const STALE_ON_FOCUS_MS = 2 * 60000;
+  let lastRefreshOkAt = 0;
+  let refreshFailures = 0;
+
+  // Same America/Chicago calendar as localDate() in src/whoop-client.mjs,
+  // which is how recovery.date is stamped.
+  function todayScorePending(dashboard) {
+    const recovery = Array.isArray(dashboard && dashboard.recovery) ? dashboard.recovery : [];
+    const newest = recovery[0];
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    const hour = Number(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Chicago', hour: 'numeric', hourCycle: 'h23',
+    }).format(new Date()));
+    // Only between 4am and 2pm: before that no new recovery can exist yet,
+    // and polling all night would spend ~2,500 API calls of the 10k daily cap.
+    if (hour < 4 || hour >= 14) return false;
+    return !newest || newest.date !== today || newest.score == null;
+  }
+
+  function scheduleNextRefresh(delayMs) {
+    if (autoRefreshTimer) clearTimeout(autoRefreshTimer);
+    autoRefreshTimer = setTimeout(() => {
+      autoRefreshTimer = null;
+      runScheduledRefresh();
+    }, delayMs);
+  }
+
+  async function runScheduledRefresh() {
+    try {
+      const dashboard = await doRefresh();
+      lastRefreshOkAt = Date.now();
+      refreshFailures = 0;
+      const mins = todayScorePending(dashboard)
+        ? PENDING_REFRESH_MINS
+        : Math.max(1, Number(settings.autoRefreshMins) || DEFAULT_SETTINGS.autoRefreshMins);
+      if (process.env.WHOOP_DEBUG_SYNC) console.log(`auto-sync ok; next in ${mins} min`);
+      scheduleNextRefresh(mins * 60000);
+    } catch (err) {
+      refreshFailures += 1;
+      const backoff = Math.min(5 * 60000, 20000 * 2 ** Math.min(refreshFailures - 1, 4));
+      console.error(`Auto-refresh failed (retry in ${Math.round(backoff / 1000)}s):`, err);
+      scheduleNextRefresh(backoff);
+    }
+  }
+
+  // Sync now if the last good sync is old; otherwise leave the schedule be.
+  function refreshIfStale() {
+    if (Date.now() - lastRefreshOkAt < STALE_ON_FOCUS_MS) return;
+    runScheduledRefresh();
+  }
+
   function startAutoRefreshTimer() {
-    if (autoRefreshTimer) clearInterval(autoRefreshTimer);
-    const mins = Math.max(1, Number(settings.autoRefreshMins) || DEFAULT_SETTINGS.autoRefreshMins);
-    autoRefreshTimer = setInterval(() => {
-      doRefresh().catch((err) => console.error('Auto-refresh failed:', err));
-    }, mins * 60000);
+    // First run soon after launch; the initial render already fetched once.
+    scheduleNextRefresh(15000);
   }
 
   // -----------------------------------------------------------------------
@@ -857,7 +935,10 @@ if (!gotLock) {
 
   ipcMain.handle('whoop:refresh', async () => {
     try {
-      return await doRefresh();
+      const dashboard = await doRefresh();
+      lastRefreshOkAt = Date.now();
+      refreshFailures = 0;
+      return dashboard;
     } catch (err) {
       return { error: String(err) };
     }
@@ -1144,9 +1225,11 @@ if (!gotLock) {
     scheduleMorningNotification();
 
     powerMonitor.on('resume', () => {
-      doRefresh().catch((err) => console.error('Refresh on resume failed:', err));
+      lastRefreshOkAt = 0; // anything synced before sleep is stale by definition
+      refreshIfStale();
       sampleHeartRate().catch((err) => console.error('HR sample on resume failed:', err));
     });
+    powerMonitor.on('unlock-screen', refreshIfStale);
 
     // Flush buffered beats and shut the helper down cleanly, so the last
     // minute of samples is not lost on quit.

@@ -1139,6 +1139,26 @@
     }
   }
 
+  // Battery badge shown beside the strap pill. While connected it is the live
+  // level; otherwise the last level the strap reported, dimmed, so a stale
+  // number is never mistaken for a current one.
+  function strapBatteryHTML(connected) {
+    var info = ble.info || (state.heartRate && state.heartRate.strapInfo);
+    var pct = info && isNum(info.battery) ? clamp(Math.round(info.battery), 0, 100) : null;
+    if (pct == null) return '';
+    var tone = pct <= 20 ? 'low' : pct <= 50 ? 'mid' : 'ok';
+    var title = connected ? 'Strap battery ' + pct + '%' : 'Last reported strap battery ' + pct + '%';
+    // 18x10 body, 2px cap; the fill width tracks the level (min 1px so 1% shows).
+    var fillW = Math.max(1, Math.round((pct / 100) * 14));
+    return '<span class="strap-battery ' + tone + (connected ? '' : ' stale') + '" title="' + title +
+      '" aria-label="' + title + '">' +
+      '<svg class="strap-battery-icon" viewBox="0 0 22 12" width="22" height="12" aria-hidden="true">' +
+      '<rect x="0.75" y="0.75" width="18" height="10.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.55"/>' +
+      '<rect x="20" y="4" width="1.75" height="4" rx="0.8" fill="currentColor" opacity="0.55"/>' +
+      '<rect class="strap-battery-fill" x="2.75" y="2.75" width="' + fillW + '" height="6.5" rx="1.2" fill="currentColor"/>' +
+      '</svg><span class="strap-battery-pct">' + pct + '%</span></span>';
+  }
+
   function renderOverviewStrap() {
     var el = document.getElementById('overview-strap-card');
     if (!el) return;
@@ -1160,16 +1180,15 @@
         (isNum(ble.rmssd) ? ' &middot; HRV ' + ble.rmssd + ' ms' : '') +
         '</span>';
     } else {
-      var info = ble.info || (state.heartRate && state.heartRate.strapInfo);
-      left = '<span class="strap-strip-meta">' + escapeHTML(strapStatusText()) +
-        (info && isNum(info.battery) ? ' &middot; last battery ' + info.battery + '%' : '') + '</span>';
+      left = '<span class="strap-strip-meta">' + escapeHTML(strapStatusText()) + '</span>';
     }
 
     el.innerHTML =
       '<span class="micro-label">Live HR</span>' +
       '<span class="strap-strip-left">' + left + '</span>' +
+      '<span class="strap-status-group">' + strapBatteryHTML(connected) +
       '<span class="strap-strip-state' + (connected ? ' on' : '') + '">' +
-      (connected ? 'Strap live' : 'Auto') + '</span>';
+      (connected ? 'Strap live' : 'Auto') + '</span></span>';
   }
 
   // Every strap state change repaints whichever strap surfaces are on screen.
@@ -1955,9 +1974,11 @@
     if (!live) return;
     var prevStatus = ble.status;
     var prevAt = ble.lastAt;
+    var prevBattery = ble.info && ble.info.battery;
     ble.status = live.status || 'off';
     ble.rmssd = isNum(live.rmssd) ? live.rmssd : ble.rmssd;
     if (live.info) ble.info = live.info;
+    var batteryChanged = !!(ble.info && isNum(ble.info.battery) && ble.info.battery !== prevBattery);
 
     if (ble.status !== 'connected') {
       ble.bpm = null;
@@ -1971,7 +1992,9 @@
       ble.lastAt = live.lastAt;
       onStrapSample({ bpm: live.bpm, at: live.lastAt });
     }
-    if (prevStatus !== 'connected') renderStrapSurfaces();
+    // The badge lives outside the per-beat fast path, so a new level needs
+    // its own repaint.
+    if (prevStatus !== 'connected' || batteryChanged) renderStrapSurfaces();
   }
 
   function startStrapWatch() {
@@ -2249,9 +2272,10 @@
     var strapOn = ble.status === 'connected';
     // Status, not a control: the strap connects and reconnects by itself.
     var strapBtn =
+      '<span class="strap-status-group">' + strapBatteryHTML(strapOn) +
       '<span class="strap-strip-state' + (strapOn ? ' on' : '') + '">' +
       (strapOn ? 'Strap live' : escapeHTML(strapStatusText())) +
-      '</span>';
+      '</span></span>';
 
     var head =
       '<div class="card-head hr-head"><span class="micro-label">Heart Rate &mdash; today</span>' +
@@ -2985,10 +3009,13 @@
   async function applyUpdate(data) {
     if (!data || data.error) return;
     var prevSelectedDate = state.dateList[state.selectedIndex];
+    // Someone looking at the newest day wants "today", including after
+    // midnight rolls a new day in; a deliberately picked older day stays put.
+    var followNewest = state.selectedIndex === 0;
     state.data = data;
     buildIndexes(data);
     var idx = prevSelectedDate ? state.dateList.indexOf(prevSelectedDate) : -1;
-    state.selectedIndex = idx >= 0 ? idx : 0;
+    state.selectedIndex = followNewest ? 0 : (idx >= 0 ? idx : 0);
     renderHeader();
     renderDayStrip();
     await renderActiveView();

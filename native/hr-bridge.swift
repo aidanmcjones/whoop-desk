@@ -94,6 +94,8 @@ final class Bridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private var peripheral: CBPeripheral?
     private let preferredId: UUID?
     private var state = ""
+    private var batteryChar: CBCharacteristic?
+    private var batteryTimer: Timer?
 
     init(preferredId: UUID?) {
         self.preferredId = preferredId
@@ -195,7 +197,20 @@ final class Bridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         retry()
     }
 
+    /// Not every strap notifies on battery changes, so re-read on a slow
+    /// timer while connected. A level changes by ~1% an hour; 5 min is plenty.
+    private func startBatteryPoll(_ p: CBPeripheral) {
+        batteryTimer?.invalidate()
+        batteryTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
+            guard let self = self, let ch = self.batteryChar, p.state == .connected else { return }
+            p.readValue(for: ch)
+        }
+    }
+
     func centralManager(_ c: CBCentralManager, didDisconnectPeripheral p: CBPeripheral, error: Error?) {
+        batteryTimer?.invalidate()
+        batteryTimer = nil
+        batteryChar = nil
         setState("disconnected")
         retry()
     }
@@ -232,8 +247,10 @@ final class Bridge: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
             case heartRateMeasurement:
                 p.setNotifyValue(true, for: ch)
             case batteryLevel:
+                batteryChar = ch
                 p.readValue(for: ch)
                 p.setNotifyValue(true, for: ch)
+                startBatteryPoll(p)
             case firmwareRevision, modelNumber:
                 p.readValue(for: ch)
             default:
