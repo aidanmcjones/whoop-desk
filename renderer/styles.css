@@ -2153,6 +2153,37 @@ button {
   .hr-live-btn.on .hr-live-btn-dot { animation: none; }
 }
 
+/* strap battery badge, beside the state pill */
+.strap-status-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.strap-battery {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--green);
+  white-space: nowrap;
+}
+
+.strap-battery.mid { color: var(--amber); }
+.strap-battery.low { color: var(--red); }
+.strap-battery.stale { opacity: 0.5; }
+
+.strap-battery-icon { display: block; }
+
+.strap-battery-fill { transition: width 0.4s ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .strap-battery-fill { transition: none; }
+}
+
 /* strap state pill — status only; the connection is automatic */
 .strap-strip-state {
   font-size: 11px;

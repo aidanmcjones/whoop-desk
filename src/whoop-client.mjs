@@ -39,6 +39,10 @@ const CLAUDE_CONFIG_PATH = path.join(os.homedir(), '.claude.json');
 const API_BASE = 'https://api.prod.whoop.com/developer';
 const TOKEN_URL = 'https://api.prod.whoop.com/oauth/oauth2/token';
 
+// A socket left half-open by sleep or a Wi-Fi change never errors on its
+// own, and one hung request would stall every later sync behind it.
+const REQUEST_TIMEOUT_MS = 20000;
+
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CACHE_FILE = path.join(MODULE_DIR, 'last-dashboard.json');
 
@@ -249,6 +253,7 @@ async function refreshTokens(oldTokens) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -314,7 +319,10 @@ async function refreshShared(ctx) {
 }
 
 export async function apiFetch(url, ctx, { retried401 = false, retried429 = false } = {}) {
-  const res = await fetch(url, { headers: authHeader(ctx.tokens) });
+  const res = await fetch(url, {
+    headers: authHeader(ctx.tokens),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
 
   if (res.status === 401 && !retried401) {
     await refreshShared(ctx);
