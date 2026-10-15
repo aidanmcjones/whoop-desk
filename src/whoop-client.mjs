@@ -505,11 +505,26 @@ export function normalizeSleep(r) {
   };
 }
 
+// A WHOOP cycle runs from one sleep onset to the next, so it starts the
+// evening before the day it represents whenever you fall asleep before
+// midnight. Dating it by start, or by end, therefore files it under the wrong
+// day depending on bedtime: today's live cycle (started 11:26pm yesterday)
+// and yesterday's finished one (ended 11:26pm yesterday) both landed on
+// yesterday, leaving today with no strain at all. Twelve hours after sleep
+// onset is always well inside the day the cycle is about.
+const CYCLE_DAY_OFFSET_MS = 12 * 3600000;
+
+export function cycleDate(r) {
+  const startMs = r && r.start ? Date.parse(r.start) : NaN;
+  if (Number.isFinite(startMs)) return localDate(new Date(startMs + CYCLE_DAY_OFFSET_MS));
+  return localDate(r && (r.end || r.created_at));
+}
+
 export function normalizeCycle(r) {
   const scored = r.score_state === 'SCORED';
   const score = r.score || {};
   return {
-    date: localDate(r.end || r.start || r.created_at),
+    date: cycleDate(r),
     // start/end are carried through because the heart-rate monitor needs the
     // cycle's real duration to turn cumulative energy into a per-minute rate,
     // and needs `end === null` to recognise the in-progress cycle.
