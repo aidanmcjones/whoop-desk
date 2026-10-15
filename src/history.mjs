@@ -256,13 +256,39 @@ export async function backfillAll({ onProgress } = {}) {
 // -----------------------------------------------------------------------
 // syncRecent
 // -----------------------------------------------------------------------
+// Records are saved as soon as they appear, often before WHOOP has finished
+// them: a cycle is open (no end) until the next sleep, and a score can be
+// PENDING for hours. A fixed 7-day window stops re-fetching them once they
+// age out, freezing a half-finished record forever (a cycle from Oct 5 sat
+// "in progress" at 4.7 strain for over a week). So the window reaches back to
+// the oldest unsettled record, within a cap that bounds the API cost.
+const UNSETTLED_LOOKBACK_DAYS = 60;
+
+export function oldestUnsettledStart(store, now = Date.now()) {
+  const floor = now - UNSETTLED_LOOKBACK_DAYS * 86400000;
+  let oldest = null;
+  for (const kind of ['recovery', 'sleep', 'cycle', 'workout']) {
+    for (const r of Object.values((store.raw && store.raw[kind]) || {})) {
+      const unsettled = (kind === 'cycle' && !r.end) || (r.score_state && r.score_state !== 'SCORED');
+      if (!unsettled) continue;
+      const t = Date.parse(r.start || r.created_at || '');
+      if (!Number.isFinite(t) || t < floor) continue;
+      if (oldest == null || t < oldest) oldest = t;
+    }
+  }
+  return oldest;
+}
+
 export async function syncRecent({ days = 7 } = {}) {
   const store = await loadStore();
   const ctx = await getAuthedContext();
   const notes = { v1Fallbacks: [] };
 
   const end = new Date();
-  const start = new Date(end.getTime() - days * 86400000);
+  let startMs = end.getTime() - days * 86400000;
+  const unsettled = oldestUnsettledStart(store, end.getTime());
+  if (unsettled != null && unsettled - 60000 < startMs) startMs = unsettled - 60000;
+  const start = new Date(startMs);
   const range = { start: start.toISOString(), end: end.toISOString() };
 
   const [recoveryRaw, sleepRaw, cycleRaw, workoutRaw, profileBasic, bodyMeasurement] = await Promise.all([
